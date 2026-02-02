@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "NanoPro Validator",
+  "version": "1.1.0",
+  "description": "Validates invoice line item calculations on Nanonets review pages",
+  "author": "NanoPro",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.nanonets.com/*",
+    "*://app.nanonets.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.nanonets.com/*",
+        "https://app.nanonets.com/*"
+      ],
+      "js": [
+        "src/content/parser.js",
+        "src/content/selector.js",
+        "src/content/capture.js",
+        "src/content/tableParser.js",
+        "src/content/validator.js",
+        "src/content/suggester.js",
+        "src/ui/overlay.js",
+        "src/ui/badge.js",
+        "src/ui/panel.js",
+        "src/content/index.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "NanoPro Validator"
+  },
+  "commands": {
+    "start-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Start table selection mode"
+    },
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+V",
+        "mac": "Alt+Shift+V"
+      },
+      "description": "Toggle validation panel"
+    },
+    "reset-extension": {
+      "suggested_key": {
+        "default": "Alt+Shift+R",
+        "mac": "Alt+Shift+R"
+      },
+      "description": "Reset validation state"
+    }
+  }
+}
