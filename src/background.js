@@ -1,8 +1,9 @@
 /**
- * NanoPro Validator - Background Script
+ * NanoPro Validator v2.0 — Background Script
  * 
  * Handles keyboard shortcuts and communication between
  * the extension popup and content scripts.
+ * v2: Added toggle-mode command
  */
 
 // Listen for keyboard commands
@@ -32,4 +33,4 @@ chrome.action.onClicked.addListener((tab) => {
     });
 });
 
-console.log('[NanoPro Background] Service worker started');
+console.log('[NanoPro Background v2] Service worker started');

@@ -33,6 +33,16 @@ const NanoProOverlay = (function () {
       align-items: center;
       gap: 8px;
       pointer-events: auto;
+      transition: box-shadow 0.2s ease;
+    }
+
+    .nanopro-container.dragging {
+      opacity: 0.9;
+      cursor: grabbing !important;
+    }
+
+    .nanopro-container.dragging * {
+      cursor: grabbing !important;
     }
 
     .nanopro-badge {
@@ -89,6 +99,26 @@ const NanoProOverlay = (function () {
       50% { opacity: 0.8; }
     }
 
+    .nanopro-badge-pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #ef4444;
+      display: none;
+      animation: pulse-dot 1.5s infinite;
+      margin-left: -4px;
+    }
+
+    .nanopro-badge.has-caution .nanopro-badge-pulse-dot {
+      display: block;
+    }
+
+    @keyframes pulse-dot {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+      70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
     .nanopro-badge-icon {
       font-size: 18px;
     }
@@ -124,14 +154,104 @@ const NanoProOverlay = (function () {
       fill: currentColor;
     }
 
+    /* v2: Mode toggle switch */
+    .nanopro-mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.15);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-left: 4px;
+      color: inherit;
+      font-family: inherit;
+    }
+
+    .nanopro-mode-toggle:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .nanopro-mode-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    .nanopro-mode-switch {
+      width: 28px;
+      height: 16px;
+      border-radius: 9999px;
+      background: rgba(0, 0, 0, 0.2);
+      position: relative;
+      transition: background 0.2s ease;
+    }
+
+    .nanopro-mode-toggle.active .nanopro-mode-switch {
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .nanopro-mode-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.2s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .nanopro-mode-toggle.active .nanopro-mode-knob {
+      transform: translateX(12px);
+    }
+
     .nanopro-panel {
       width: 380px;
       max-height: 400px;
+      min-width: 280px;
+      min-height: 200px;
       background: white;
       border-radius: 12px;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
       overflow: hidden;
       display: none;
+      position: relative;
+    }
+
+    .nanopro-panel.resizing {
+      user-select: none;
+    }
+
+    .nanopro-resize-handle {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 18px;
+      height: 18px;
+      cursor: nwse-resize;
+      background: transparent;
+      z-index: 10;
+    }
+
+    .nanopro-resize-handle::after {
+      content: '';
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid #cbd5e1;
+      border-bottom: 2px solid #cbd5e1;
+    }
+
+    .nanopro-resize-handle:hover::after {
+      border-color: #94a3b8;
     }
 
     .nanopro-panel.open {
@@ -403,6 +523,48 @@ const NanoProOverlay = (function () {
       color: #b45309;
     }
 
+    /* Caution row styling (Item_No warnings) */
+    .nanopro-row-caution {
+      background: #fff7ed;
+      border-color: #fdba74;
+    }
+
+    .nanopro-icon-caution {
+      background: #f97316;
+    }
+
+    .nanopro-label-caution {
+      color: #c2410c;
+    }
+
+    .nanopro-caution-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      color: #c2410c;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 6px;
+    }
+
+    .nanopro-caution-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      color: #c2410c;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
     /* Large calculation display */
     .nanopro-calc-large {
       font-size: 18px;
@@ -481,6 +643,59 @@ const NanoProOverlay = (function () {
     .nanopro-panel-body::-webkit-scrollbar-thumb:hover {
       background: #94a3b8;
     }
+
+    /* Invoice total validation */
+    .nanopro-total {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border-left: 4px solid #9ca3af;
+      background: #f8fafc;
+    }
+    .nanopro-total-match {
+      border-left-color: #22c55e;
+      background: #f0fdf4;
+    }
+    .nanopro-total-mismatch {
+      border-left-color: #ef4444;
+      background: #fef2f2;
+    }
+    .nanopro-total-info {
+      border-left-color: #94a3b8;
+    }
+    .nanopro-total-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .nanopro-total-values {
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .nanopro-total-sum {
+      font-weight: 600;
+      color: #1e40af;
+    }
+    .nanopro-total-sep {
+      color: #d1d5db;
+    }
+    .nanopro-total-invoice {
+      font-weight: 600;
+      color: #374151;
+    }
+    .nanopro-total-diff {
+      font-weight: 600;
+      color: #dc2626;
+    }
+    .nanopro-total-note {
+      color: #6b7280;
+      font-style: italic;
+      font-size: 12px;
+    }
   `;
 
   /**
@@ -525,6 +740,9 @@ const NanoProOverlay = (function () {
       document.body.appendChild(this.host);
       this.isInjected = true;
 
+      // Setup interactions
+      this.setupDrag();
+
       console.log('[NanoPro Overlay] Injected successfully');
       return this.shadow;
     }
@@ -564,6 +782,118 @@ const NanoProOverlay = (function () {
     isActive() {
       return this.isInjected && this.host && this.host.parentNode;
     }
+
+    /**
+     * Setup Ctrl+drag to reposition the overlay container
+     */
+    setupDrag() {
+      if (!this.container) return;
+
+      let isDragging = false;
+      let startX = 0, startY = 0;
+      let startLeft = 0, startTop = 0;
+      let hasMoved = false;
+
+      const container = this.container;
+
+      container.addEventListener('mousedown', (e) => {
+        if (!e.ctrlKey) return;
+
+        // Get current computed position
+        const rect = container.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        isDragging = true;
+        hasMoved = false;
+        container.classList.add('dragging');
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+
+        // Remove the centering transform and set explicit coordinates
+        container.style.transform = 'none';
+        container.style.left = (startLeft + dx) + 'px';
+        container.style.top = (startTop + dy) + 'px';
+
+        e.preventDefault();
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        container.classList.remove('dragging');
+      });
+    }
+
+    /**
+     * Setup resize handle for the panel
+     * Called externally after panel element exists
+     */
+    setupResize(panelElement) {
+      if (!panelElement) return;
+
+      // Add resize handle
+      const handle = document.createElement('div');
+      handle.className = 'nanopro-resize-handle';
+      handle.title = 'Drag to resize';
+      panelElement.appendChild(handle);
+
+      let isResizing = false;
+      let startX = 0, startY = 0;
+      let startW = 0, startH = 0;
+
+      const MIN_W = 280, MIN_H = 200;
+      const MAX_W = 700, MAX_H = 700;
+
+      handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startW = panelElement.offsetWidth;
+        startH = panelElement.offsetHeight;
+        panelElement.classList.add('resizing');
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        const newW = Math.max(MIN_W, Math.min(MAX_W, startW + dx));
+        const newH = Math.max(MIN_H, Math.min(MAX_H, startH + dy));
+
+        panelElement.style.width = newW + 'px';
+        panelElement.style.maxHeight = newH + 'px';
+
+        // Also update the panel body max-height
+        const body = panelElement.querySelector('.nanopro-panel-body');
+        if (body) {
+          body.style.maxHeight = (newH - 50) + 'px'; // subtract header height
+        }
+
+        e.preventDefault();
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!isResizing) return;
+        isResizing = false;
+        panelElement.classList.remove('resizing');
+      });
+    }
   }
 
   // Create singleton instance
@@ -575,7 +905,8 @@ const NanoProOverlay = (function () {
     remove: () => overlay.remove(),
     getContainer: () => overlay.getContainer(),
     getShadow: () => overlay.getShadow(),
-    isActive: () => overlay.isActive()
+    isActive: () => overlay.isActive(),
+    setupResize: (panelEl) => overlay.setupResize(panelEl)
   };
 
 })();

@@ -156,9 +156,10 @@ const NanoProCapture = (function () {
         for (const el of allElements) {
             const rect = el.getBoundingClientRect();
 
-            // Check if element is in region
-            if (rect.right < region.x || rect.left > region.x + region.width) continue;
-            if (rect.bottom < region.y || rect.top > region.y + region.height) continue;
+            // v2: Added 3px buffer to prevent edge elements from being clipped
+            const buffer = 3;
+            if (rect.right < region.x - buffer || rect.left > region.x + region.width + buffer) continue;
+            if (rect.bottom < region.y - buffer || rect.top > region.y + region.height + buffer) continue;
             if (rect.width === 0 || rect.height === 0) continue;
 
             // Get computed style

@@ -1,8 +1,9 @@
 /**
- * NanoPro Badge - Floating Status Badge
+ * NanoPro Badge v2.0 - Floating Status Badge with Mode Toggle
  * 
  * Displays validation status at top-center of page.
- * States: valid, invalid, incomplete, loading
+ * States: valid, invalid, incomplete, loading, ready, selecting
+ * v2: Added mode toggle (Auto/Manual)
  */
 
 const NanoProBadge = (function () {
@@ -54,8 +55,10 @@ const NanoProBadge = (function () {
         constructor() {
             this.element = null;
             this.currentState = null;
+            this.currentMode = 'manual';
             this.onRefreshCallback = null;
             this.onClickCallback = null;
+            this.onModeToggleCallback = null;
         }
 
         /**
@@ -71,6 +74,13 @@ const NanoProBadge = (function () {
             this.element.innerHTML = `
         <span class="nanopro-badge-icon">🔄</span>
         <span class="nanopro-badge-text">Initializing...</span>
+        <span class="nanopro-badge-pulse-dot"></span>
+        <button class="nanopro-mode-toggle" title="Switch detection mode">
+          <span class="nanopro-mode-label">Manual</span>
+          <span class="nanopro-mode-switch">
+            <span class="nanopro-mode-knob"></span>
+          </span>
+        </button>
         <button class="nanopro-badge-refresh" title="Refresh validation">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
@@ -78,22 +88,32 @@ const NanoProBadge = (function () {
         </button>
       `;
 
-            // Add event listeners
+            // Badge click handler
             this.element.addEventListener('click', (e) => {
-                // Ignore if clicking refresh button
                 if (e.target.closest('.nanopro-badge-refresh')) return;
+                if (e.target.closest('.nanopro-mode-toggle')) return;
 
                 if (this.onClickCallback) {
                     this.onClickCallback();
                 }
             });
 
+            // Refresh button handler
             const refreshBtn = this.element.querySelector('.nanopro-badge-refresh');
             refreshBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (this.onRefreshCallback) {
                     this.setState('loading');
                     this.onRefreshCallback();
+                }
+            });
+
+            // v2: Mode toggle handler
+            const modeToggle = this.element.querySelector('.nanopro-mode-toggle');
+            modeToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onModeToggleCallback) {
+                    this.onModeToggleCallback();
                 }
             });
 
@@ -138,8 +158,36 @@ const NanoProBadge = (function () {
         }
 
         /**
-         * Update for valid state
+         * v2: Set current mode and update toggle UI
          */
+        setMode(mode) {
+            this.currentMode = mode;
+            if (!this.element) return;
+
+            const label = this.element.querySelector('.nanopro-mode-label');
+            const toggle = this.element.querySelector('.nanopro-mode-toggle');
+
+            if (label) {
+                label.textContent = mode === 'auto' ? 'Auto' : 'Manual';
+            }
+
+            if (toggle) {
+                if (mode === 'auto') {
+                    toggle.classList.add('active');
+                } else {
+                    toggle.classList.remove('active');
+                }
+            }
+
+            // Update ready state text based on mode
+            if (this.currentState === 'ready') {
+                const textEl = this.element.querySelector('.nanopro-badge-text');
+                if (textEl) {
+                    textEl.textContent = mode === 'auto' ? 'Auto-detecting...' : 'Click to Select Table';
+                }
+            }
+        }
+
         setValid(rowCount) {
             this.setState('valid', { total: rowCount });
             const textEl = this.element.querySelector('.nanopro-badge-text');
@@ -148,72 +196,58 @@ const NanoProBadge = (function () {
             }
         }
 
-        /**
-         * Update for invalid state
-         */
         setInvalid(errorCount, total) {
             this.setState('invalid', { errorCount, total });
         }
 
-        /**
-         * Update for incomplete state
-         */
         setIncomplete() {
             this.setState('incomplete');
         }
 
-        /**
-         * Update for loading state
-         */
         setLoading() {
             this.setState('loading');
         }
 
-        /**
-         * Update for no data state
-         */
         setNoData() {
             this.setState('noData');
         }
 
-        /**
-         * Update for ready state
-         */
         setReady() {
             this.setState('ready');
+            // Restore mode-appropriate text
+            if (this.currentMode === 'auto') {
+                const textEl = this.element?.querySelector('.nanopro-badge-text');
+                if (textEl) textEl.textContent = 'Auto-detecting...';
+            }
         }
 
-        /**
-         * Update for selecting state
-         */
         setSelecting() {
             this.setState('selecting');
         }
 
-        /**
-         * Set refresh callback
-         */
         onRefresh(callback) {
             this.onRefreshCallback = callback;
         }
 
-        /**
-         * Set click callback
-         */
         onClick(callback) {
             this.onClickCallback = callback;
         }
 
         /**
-         * Get current state
+         * v2: Set mode toggle callback
          */
+        onModeToggle(callback) {
+            this.onModeToggleCallback = callback;
+        }
+
         getState() {
             return this.currentState;
         }
 
-        /**
-         * Remove badge
-         */
+        getMode() {
+            return this.currentMode;
+        }
+
         remove() {
             if (this.element && this.element.parentNode) {
                 this.element.parentNode.removeChild(this.element);
@@ -236,15 +270,18 @@ const NanoProBadge = (function () {
         setNoData: () => badge.setNoData(),
         setReady: () => badge.setReady(),
         setSelecting: () => badge.setSelecting(),
+        setMode: (mode) => badge.setMode(mode),
         onRefresh: (callback) => badge.onRefresh(callback),
         onClick: (callback) => badge.onClick(callback),
+        onModeToggle: (callback) => badge.onModeToggle(callback),
         getState: () => badge.getState(),
+        getMode: () => badge.getMode(),
         remove: () => badge.remove()
     };
 
 })();
 
-// Export for use in other modules
+// Export
 if (typeof window !== 'undefined') {
     window.NanoProBadge = NanoProBadge;
 }

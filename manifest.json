@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "NanoPro Validator",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Validates invoice line item calculations on Nanonets review pages",
   "author": "NanoPro",
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
   "host_permissions": [
     "*://*.nanonets.com/*",
@@ -27,6 +28,8 @@
         "src/content/tableParser.js",
         "src/content/validator.js",
         "src/content/suggester.js",
+        "src/content/scanner.js",
+        "src/content/autoDetector.js",
         "src/ui/overlay.js",
         "src/ui/badge.js",
         "src/ui/panel.js",
@@ -69,6 +72,13 @@
         "mac": "Alt+Shift+R"
       },
       "description": "Reset validation state"
+    },
+    "toggle-mode": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "Toggle Auto/Manual detection mode"
     }
   }
 }

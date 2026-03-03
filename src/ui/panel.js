@@ -48,6 +48,12 @@ const NanoProPanel = (function () {
       closeBtn.addEventListener('click', () => this.close());
 
       container.appendChild(this.element);
+
+      // Setup resize handle (overlay owns the interaction logic)
+      if (typeof NanoProOverlay !== 'undefined' && NanoProOverlay.setupResize) {
+        NanoProOverlay.setupResize(this.element);
+      }
+
       return this.element;
     }
 
@@ -118,6 +124,16 @@ const NanoProPanel = (function () {
         </div>
       `;
 
+      // Item_No caution summary
+      const itemNoWarnings = validationResult.itemNoWarnings || [];
+      if (itemNoWarnings.length > 0) {
+        html += `
+          <div class="nanopro-caution-summary">
+            ⚠️ ${itemNoWarnings.length} Item_No caution${itemNoWarnings.length > 1 ? 's' : ''}
+          </div>
+        `;
+      }
+
       for (const row of results) {
         if (row.status === 'VALID') {
           html += this.renderValidRow(row);
@@ -127,6 +143,11 @@ const NanoProPanel = (function () {
         } else if (row.status === 'INCOMPLETE') {
           html += this.renderIncompleteRow(row);
         }
+      }
+
+      // Render total validation (sum vs invoice_amount)
+      if (validationResult.totalValidation) {
+        html += this.renderTotalValidation(validationResult.totalValidation);
       }
 
       body.innerHTML = html;
@@ -150,6 +171,7 @@ const NanoProPanel = (function () {
               <span class="nanopro-calc-op">=</span>
               <span class="nanopro-calc-result nanopro-calc-valid">${NanoProParser.formatNumber(row.actual)}</span>
             </div>
+            ${this.renderItemNoCautionTag(row)}
           </div>
         </div>
       `;
@@ -192,6 +214,7 @@ const NanoProPanel = (function () {
               Expected: <strong>${NanoProParser.formatNumber(row.expected)}</strong>
               <span class="nanopro-calc-diff">(off by ${NanoProParser.formatNumber(row.difference)})</span>
             </div>
+            ${this.renderItemNoCautionTag(row)}
           </div>
           <div class="nanopro-suggestions">
             <div class="nanopro-suggestion-label">💡 Suggestions</div>
@@ -224,6 +247,80 @@ const NanoProPanel = (function () {
             <div class="nanopro-row-calc">
               Missing: ${missing}
             </div>
+            ${this.renderItemNoCautionTag(row)}
+          </div>
+        </div>
+      `;
+    }
+
+    /**
+     * Render Item_No caution tag for a row (if applicable)
+     */
+    renderItemNoCautionTag(row) {
+      if (!row.itemNoWarning) return '';
+
+      const reasonText = this.formatItemNoReason(row.itemNoReason, row.itemNoValue);
+      return `<div class="nanopro-caution-tag">⚠️ Item_No: ${reasonText}</div>`;
+    }
+
+    /**
+     * Format human-readable reason for Item_No caution
+     */
+    formatItemNoReason(reason, value) {
+      switch (reason) {
+        case 'COLUMN_NOT_FOUND': return 'Not found';
+        case 'BLANK': return 'Blank';
+        case 'DASH_R': return `"${value?.trim() || '-R'}" detected`;
+        default: return reason || 'Unknown';
+      }
+    }
+
+    /**
+     * Render total validation: sum vs invoice_amount
+     */
+    renderTotalValidation(total) {
+      if (!total) return '';
+
+      const sumFormatted = NanoProParser.formatNumber(total.sumAmount);
+
+      if (total.status === 'NOT_FOUND') {
+        return `
+          <div class="nanopro-total nanopro-total-info">
+            <div class="nanopro-total-label">Invoice Total</div>
+            <div class="nanopro-total-values">
+              <span class="nanopro-total-sum">Sum: ${sumFormatted}</span>
+              <span class="nanopro-total-sep">|</span>
+              <span class="nanopro-total-note">invoice_amount not found in sidebar</span>
+            </div>
+          </div>
+        `;
+      }
+
+      if (total.status === 'ERROR') {
+        return `
+          <div class="nanopro-total nanopro-total-info">
+            <div class="nanopro-total-label">Invoice Total</div>
+            <div class="nanopro-total-values">
+              <span class="nanopro-total-sum">Sum: ${sumFormatted}</span>
+              <span class="nanopro-total-sep">|</span>
+              <span class="nanopro-total-note">Error: ${total.message}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      const invoiceFormatted = NanoProParser.formatNumber(total.invoiceAmount);
+      const diffFormatted = NanoProParser.formatNumber(total.difference);
+      const isMatch = total.status === 'MATCH';
+
+      return `
+        <div class="nanopro-total ${isMatch ? 'nanopro-total-match' : 'nanopro-total-mismatch'}">
+          <div class="nanopro-total-label">${isMatch ? '✅' : '❌'} Invoice Total</div>
+          <div class="nanopro-total-values">
+            <span class="nanopro-total-sum">Sum: ${sumFormatted}</span>
+            <span class="nanopro-total-sep">|</span>
+            <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}</span>
+            ${!isMatch ? `<span class="nanopro-total-sep">|</span><span class="nanopro-total-diff">Diff: ${diffFormatted}</span>` : ''}
           </div>
         </div>
       `;

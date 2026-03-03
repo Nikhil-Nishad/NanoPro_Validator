@@ -183,11 +183,23 @@ const NanoProTableParser = (function () {
         const avgGap = gaps.reduce((sum, g) => sum + g.gap, 0) / gaps.length || 10;
         const avgHeight = elements.reduce((sum, el) => sum + el.height, 0) / elements.length;
 
-        // Row break threshold: larger gaps indicate new rows
-        const rowBreakThreshold = Math.max(avgHeight * 0.7, avgGap * 1.5, 15);
+        // v2.0: Improved row break threshold using percentile-based detection
+        // Sort gaps to find the median — more robust than mean for skewed distributions
+        const sortedGaps = [...gaps].map(g => g.gap).sort((a, b) => a - b);
+        const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)] || avgGap;
 
-        console.log('[NanoPro TableParser] Row detection - avgGap:', avgGap.toFixed(1),
-            'avgHeight:', avgHeight.toFixed(1), 'threshold:', rowBreakThreshold.toFixed(1));
+        // Use the larger of median-based or height-based threshold
+        // The 2.0x multiplier on median is more conservative than the old 1.5x on avg
+        // This prevents merging the first data row into the header when gaps are tight
+        const rowBreakThreshold = Math.max(
+            avgHeight * 0.5,     // v2: lowered from 0.7 to catch tighter rows
+            medianGap * 2.0,     // v2: median-based, more conservative
+            12                   // v2: reduced floor from 15px to 12px
+        );
+
+        console.log('[NanoPro TableParser] Row detection v2 - avgGap:', avgGap.toFixed(1),
+            'medianGap:', medianGap.toFixed(1), 'avgHeight:', avgHeight.toFixed(1),
+            'threshold:', rowBreakThreshold.toFixed(1));
 
         // Group into rows
         const rows = [];

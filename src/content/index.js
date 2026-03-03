@@ -1,8 +1,11 @@
 /**
- * NanoPro Validator - Main Content Script (Selection Mode)
+ * NanoPro Validator v2.0 — Main Content Script
  * 
- * Entry point for the extension using manual selection + text extraction.
- * User selects the table area, extension extracts text and validates.
+ * Entry point with dual-mode support:
+ * - Manual mode: User selects the table area with snipping tool
+ * - Automatic mode: Auto-detects the table via CSS selectors
+ * 
+ * Mode persists via chrome.storage.local.
  * Resets on page navigation.
  */
 
@@ -12,8 +15,10 @@
     // Configuration
     const CONFIG = {
         autoValidate: false,
-        observeMutations: false,
-        retryAttempts: 0
+        observeMutations: true,
+        retryAttempts: 3,
+        retryDelay: 1500,
+        autoDetectDelay: 2000  // Wait for React to render
     };
 
     // State
@@ -21,23 +26,29 @@
     let validationResult = null;
     let lastSelection = null;
     let currentUrl = window.location.href;
+    let currentMode = 'manual';  // v2: 'manual' or 'auto'
+    let mutationObserver = null;
+    let autoDetectTimer = null;
 
     /**
      * Initialize the extension
      */
-    function initialize() {
+    async function initialize() {
         if (isInitialized) {
             console.log('[NanoPro] Already initialized');
             return;
         }
 
-        console.log('[NanoPro] Initializing validator extension (Selection Mode)...');
+        console.log('[NanoPro v2] Initializing validator extension...');
 
-        // Check if we're on a Nanonets page
         if (!isNanonetsPage()) {
             console.log('[NanoPro] Not a Nanonets page, skipping initialization');
             return;
         }
+
+
+        // v2: Load saved mode preference
+        await loadMode();
 
         // Inject UI overlay
         NanoProOverlay.inject();
@@ -52,86 +63,392 @@
         NanoProBadge.create(container);
         NanoProPanel.create(container);
 
-        // Set up badge interactions - clicking starts selection
-        NanoProBadge.onRefresh(startSelectionMode);
+        // Set up badge interactions
+        NanoProBadge.onRefresh(handleRefresh);
         NanoProBadge.onClick(() => {
             if (validationResult && validationResult.summary) {
                 NanoProPanel.toggle();
             } else {
-                // No result yet, start selection
-                startSelectionMode();
+                handleRefresh();
             }
         });
 
-        // Set initial state - ready to scan
-        NanoProBadge.setReady();
+        // v2: Set up mode toggle callback
+        NanoProBadge.onModeToggle(toggleMode);
+
+        // Update badge for current mode
+        updateBadgeForMode();
 
         // Watch for page navigation (SPA support)
         setupNavigationWatcher();
 
+
+        // v2: Start auto-detection if in auto mode
+        if (currentMode === 'auto') {
+            scheduleAutoDetect();
+        }
+
         isInitialized = true;
-        console.log('[NanoPro] Initialization complete - Click the badge or refresh to select table area');
+        console.log(`[NanoPro v2] Initialization complete — Mode: ${currentMode}`);
     }
 
     /**
      * Check if current page is a Nanonets page
      */
     function isNanonetsPage() {
-        const url = window.location.href;
-        return url.includes('nanonets.com');
+        return window.location.href.includes('nanonets.com');
     }
 
-    /**
-     * Setup watcher for page navigation (SPA detection)
-     */
-    function setupNavigationWatcher() {
-        // Use History API to detect navigation
-        const originalPushState = history.pushState;
-        const originalReplaceState = history.replaceState;
 
-        history.pushState = function (...args) {
-            originalPushState.apply(this, args);
-            handleNavigation();
-        };
-
-        history.replaceState = function (...args) {
-            originalReplaceState.apply(this, args);
-            handleNavigation();
-        };
-
-        // Also watch for popstate (back/forward buttons)
-        window.addEventListener('popstate', handleNavigation);
-
-        // Poll for URL changes (fallback for edge cases)
-        setInterval(() => {
-            if (window.location.href !== currentUrl) {
-                handleNavigation();
-            }
-        }, 1000);
-    }
+    // ────────────────────────────────────────────────────────
+    // MODE MANAGEMENT (v2)
+    // ────────────────────────────────────────────────────────
 
     /**
-     * Handle page navigation - reset extension state
+     * Load mode from chrome.storage.local
      */
-    function handleNavigation() {
-        const newUrl = window.location.href;
-
-        if (newUrl !== currentUrl) {
-            console.log('[NanoPro] Page changed, resetting...');
-            currentUrl = newUrl;
-            resetState();
+    async function loadMode() {
+        try {
+            const result = await chrome.storage.local.get('nanoProMode');
+            currentMode = result.nanoProMode || 'manual';
+            console.log('[NanoPro v2] Loaded mode:', currentMode);
+        } catch (e) {
+            console.log('[NanoPro v2] Could not load mode, defaulting to manual');
+            currentMode = 'manual';
         }
     }
 
     /**
-     * Reset extension state
+     * Save mode to chrome.storage.local
      */
-    function resetState() {
+    async function saveMode(mode) {
+        try {
+            await chrome.storage.local.set({ nanoProMode: mode });
+            console.log('[NanoPro v2] Saved mode:', mode);
+        } catch (e) {
+            console.log('[NanoPro v2] Could not save mode');
+        }
+    }
+
+    /**
+     * Toggle between auto and manual modes
+     */
+    async function toggleMode() {
+        const newMode = currentMode === 'auto' ? 'manual' : 'auto';
+        console.log(`[NanoPro v2] Switching mode: ${currentMode} → ${newMode}`);
+
+        currentMode = newMode;
+        await saveMode(newMode);
+
+        // Reset state when switching modes
         validationResult = null;
         lastSelection = null;
         NanoProPanel.close();
-        NanoProBadge.setReady();
-        console.log('[NanoPro] State reset - ready for new selection');
+
+        // Update badge display
+        updateBadgeForMode();
+
+        // Handle mode-specific setup
+        if (newMode === 'auto') {
+            scheduleAutoDetect();
+            setupMutationObserver();
+        } else {
+            clearAutoDetect();
+            teardownMutationObserver();
+            NanoProBadge.setReady();
+        }
+    }
+
+    /**
+     * Update badge state text for current mode
+     */
+    function updateBadgeForMode() {
+        if (typeof NanoProBadge.setMode === 'function') {
+            NanoProBadge.setMode(currentMode);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // AUTOMATIC MODE (v2)
+    // ────────────────────────────────────────────────────────
+
+    /**
+     * Schedule auto-detection after delay (wait for React render)
+     */
+    function scheduleAutoDetect() {
+        clearAutoDetect();
+        console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms`);
+        autoDetectTimer = setTimeout(runAutoDetection, CONFIG.autoDetectDelay);
+    }
+
+    /**
+     * Clear pending auto-detection
+     */
+    function clearAutoDetect() {
+        if (autoDetectTimer) {
+            clearTimeout(autoDetectTimer);
+            autoDetectTimer = null;
+        }
+    }
+
+    /**
+     * Run automatic table detection and validation
+     */
+    async function runAutoDetection(retryCount = 0) {
+        if (currentMode !== 'auto') return;
+
+        console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
+        NanoProBadge.setLoading();
+
+        try {
+            // Use AutoDetector to find and extract table
+            const detectResult = NanoProAutoDetector.detect();
+
+            if (!detectResult.success) {
+                console.warn('[NanoPro v2] Auto-detection failed:', detectResult.message);
+
+                // Retry if table might not have loaded yet
+                if (retryCount < CONFIG.retryAttempts) {
+                    console.log(`[NanoPro v2] Retrying in ${CONFIG.retryDelay}ms...`);
+                    autoDetectTimer = setTimeout(
+                        () => runAutoDetection(retryCount + 1),
+                        CONFIG.retryDelay
+                    );
+                    return;
+                }
+
+                NanoProBadge.setNoData();
+                return;
+            }
+
+            // We have extracted rows — validate them
+            processAutoDetectedRows(detectResult.rows, detectResult.columnMapping);
+
+        } catch (error) {
+            console.error('[NanoPro v2] Auto-detection error:', error);
+            NanoProBadge.setNoData();
+        }
+    }
+
+    /**
+     * Process auto-detected rows through validation pipeline
+     */
+    function processAutoDetectedRows(rows, columnMapping) {
+        console.log(`[NanoPro v2] Validating ${rows.length} auto-detected rows`);
+
+        // Convert raw string values to the {value, confidence} format the validator expects
+        // NanoProParser.parse() returns { value: number, confidence: 0-1, original: string }
+        const validationRows = rows.map(row => ({
+            qty: row.qty ? NanoProParser.parse(row.qty) : null,
+            price: row.price ? NanoProParser.parse(row.price) : null,
+            amount: row.amount ? NanoProParser.parse(row.amount) : null
+        }));
+
+        // Keep raw item_no for each row (not parsed as number)
+        // Use ?? instead of || to preserve empty strings ("" is a valid blank value)
+        const rawItemNos = rows.map(row => row.item_no ?? null);
+        const hasItemNoColumn = !!(columnMapping && columnMapping.item_no);
+
+        console.log('[NanoPro v2] Validation input:', validationRows);
+        console.log('[NanoPro v2] Item_No column detected:', hasItemNoColumn);
+
+        // Validate calculations
+        validationResult = NanoProValidator.validateAll(validationRows);
+
+        if (!validationResult.success) {
+            console.error('[NanoPro v2] Validation failed:', validationResult.error);
+            NanoProBadge.setNoData();
+            return;
+        }
+
+        // Attach supplementary validations
+        attachTotalValidation(validationResult);
+        attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn);
+
+        // Update UI
+        updateUI(validationResult);
+        NanoProPanel.render(validationResult);
+
+        console.log('[NanoPro v2] Auto-validation complete:', validationResult.summary);
+
+        // Start mutation observer for live re-validation
+        setupMutationObserver();
+    }
+
+    /**
+     * Attach total validation: sum of amounts vs invoice_amount from sidebar
+     * Enriches validationResult.totalValidation — never mutates existing data
+     */
+    function attachTotalValidation(result) {
+        if (!result || !result.success || !result.results) return;
+
+        try {
+            // Sum all amounts from validated rows (use 'actual' for valid/invalid, raw for incomplete)
+            let totalAmount = 0;
+            let summedRows = 0;
+
+            for (const row of result.results) {
+                if (row.actual !== undefined && row.actual !== null) {
+                    totalAmount += row.actual;
+                    summedRows++;
+                } else if (row.originalRow && row.originalRow.amount && row.originalRow.amount.value !== null) {
+                    totalAmount += row.originalRow.amount.value;
+                    summedRows++;
+                }
+            }
+
+            totalAmount = NanoProParser.round(totalAmount, 2);
+
+            // Find invoice_amount from sidebar
+            const invoiceAmount = NanoProAutoDetector.findInvoiceAmount();
+
+            if (!invoiceAmount) {
+                result.totalValidation = {
+                    sumAmount: totalAmount,
+                    summedRows: summedRows,
+                    invoiceAmount: null,
+                    status: 'NOT_FOUND',
+                    message: 'invoice_amount not found in sidebar'
+                };
+                console.log(`[NanoPro] Total: Sum=${totalAmount} | Invoice Amount: not found`);
+                return;
+            }
+
+            const diff = NanoProParser.round(Math.abs(totalAmount - invoiceAmount.value), 2);
+            const tolerance = 0.10;
+            const isMatch = diff <= tolerance;
+
+            result.totalValidation = {
+                sumAmount: totalAmount,
+                summedRows: summedRows,
+                invoiceAmount: invoiceAmount.value,
+                invoiceAmountRaw: invoiceAmount.raw,
+                difference: diff,
+                tolerance: tolerance,
+                status: isMatch ? 'MATCH' : 'MISMATCH',
+                selector: invoiceAmount.selector
+            };
+
+            console.log(`[NanoPro] Total: Sum=${totalAmount} | Invoice=${invoiceAmount.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
+
+        } catch (e) {
+            console.warn('[NanoPro] Total validation error:', e.message);
+            result.totalValidation = { status: 'ERROR', message: e.message };
+        }
+    }
+
+    /**
+     * Attach Item_No validation: flag rows where Item_No is "-R", blank, or missing
+     * Enriches validationResult.itemNoWarnings — never mutates existing row data
+     */
+    function attachItemNoValidation(result, rawItemNos, hasItemNoColumn = true) {
+        if (!result || !result.success || !result.results) return;
+
+        try {
+            const warnings = [];
+            const CAUTION_PATTERN = /^\s*-\s*R\s*$/i;
+
+            for (let i = 0; i < result.results.length; i++) {
+                const itemNo = rawItemNos[i] !== undefined ? rawItemNos[i] : null;
+                const rowNumber = result.results[i].rowNumber || (i + 1);
+                let reason = null;
+
+                if (itemNo === null || itemNo === undefined) {
+                    // Distinguish: column header exists (value is just empty) vs column not in table
+                    reason = hasItemNoColumn ? 'BLANK' : 'COLUMN_NOT_FOUND';
+                } else if (typeof itemNo === 'string' && itemNo.trim() === '') {
+                    reason = 'BLANK';
+                } else if (typeof itemNo === 'string' && CAUTION_PATTERN.test(itemNo)) {
+                    reason = 'DASH_R';
+                }
+
+                if (reason) {
+                    warnings.push({
+                        rowIndex: i,
+                        rowNumber: rowNumber,
+                        value: itemNo,
+                        reason: reason
+                    });
+                    // Annotate the row result
+                    result.results[i].itemNoWarning = true;
+                    result.results[i].itemNoValue = itemNo;
+                    result.results[i].itemNoReason = reason;
+                } else {
+                    result.results[i].itemNoWarning = false;
+                    result.results[i].itemNoValue = itemNo;
+                    result.results[i].itemNoReason = null;
+                }
+            }
+
+            result.itemNoWarnings = warnings;
+
+            if (warnings.length > 0) {
+                console.log(`[NanoPro] Item_No: ${warnings.length} caution(s) found:`,
+                    warnings.map(w => `Row ${w.rowNumber}: ${w.reason} ("${w.value}")`));
+            } else {
+                console.log('[NanoPro] Item_No: All rows OK');
+            }
+
+        } catch (e) {
+            console.warn('[NanoPro] Item_No validation error:', e.message);
+            result.itemNoWarnings = [];
+        }
+    }
+
+    /**
+     * Setup DOM mutation observer for auto-mode re-validation
+     */
+    function setupMutationObserver() {
+        if (mutationObserver || currentMode !== 'auto') return;
+
+        const target = document.querySelector(NanoProAutoDetector.PRIMARY_SELECTOR);
+        if (!target) return;
+
+        let debounceTimer = null;
+
+        mutationObserver = new MutationObserver((mutations) => {
+            // Debounce: only re-validate after mutations settle
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                console.log('[NanoPro v2] Table mutation detected, re-validating...');
+                runAutoDetection();
+            }, 800);
+        });
+
+        mutationObserver.observe(target, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['value']
+        });
+
+        console.log('[NanoPro v2] MutationObserver active on table container');
+    }
+
+    /**
+     * Teardown mutation observer
+     */
+    function teardownMutationObserver() {
+        if (mutationObserver) {
+            mutationObserver.disconnect();
+            mutationObserver = null;
+            console.log('[NanoPro v2] MutationObserver disconnected');
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // MANUAL MODE (unchanged from v1)
+    // ────────────────────────────────────────────────────────
+
+    /**
+     * Handle refresh/badge click action based on mode
+     */
+    function handleRefresh() {
+        if (currentMode === 'auto') {
+            runAutoDetection();
+        } else {
+            startSelectionMode();
+        }
     }
 
     /**
@@ -151,7 +468,6 @@
                 lastSelection = selection;
                 processSelection(selection);
             } else {
-                // Selection cancelled
                 console.log('[NanoPro] Selection cancelled');
                 updateBadgeState();
             }
@@ -159,7 +475,7 @@
     }
 
     /**
-     * Process the selected region
+     * Process the selected region (manual mode)
      */
     async function processSelection(selection) {
         console.log('[NanoPro] Processing selection:', selection);
@@ -214,6 +530,9 @@
                 return;
             }
 
+            // Step 4b: Attach invoice total validation
+            attachTotalValidation(validationResult);
+
             // Step 5: Update UI
             updateUI(validationResult);
 
@@ -226,6 +545,73 @@
             console.error('[NanoPro] Processing error:', error);
             NanoProBadge.setNoData();
         }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // NAVIGATION & UI (shared)
+    // ────────────────────────────────────────────────────────
+
+    /**
+     * Setup watcher for page navigation (SPA detection)
+     */
+    function setupNavigationWatcher() {
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+
+        history.pushState = function (...args) {
+            originalPushState.apply(this, args);
+            handleNavigation();
+        };
+
+        history.replaceState = function (...args) {
+            originalReplaceState.apply(this, args);
+            handleNavigation();
+        };
+
+        window.addEventListener('popstate', handleNavigation);
+
+        setInterval(() => {
+            if (window.location.href !== currentUrl) {
+                handleNavigation();
+            }
+        }, 1000);
+    }
+
+    /**
+     * Handle page navigation — reset and re-detect
+     */
+    function handleNavigation() {
+        const newUrl = window.location.href;
+
+        if (newUrl !== currentUrl) {
+            console.log('[NanoPro v2] Page changed, resetting...');
+            currentUrl = newUrl;
+            resetState();
+
+            // v2: Re-trigger auto detection if in auto mode
+            if (currentMode === 'auto') {
+                scheduleAutoDetect();
+            }
+        }
+    }
+
+    /**
+     * Reset extension state
+     */
+    function resetState() {
+        validationResult = null;
+        lastSelection = null;
+        clearAutoDetect();
+        teardownMutationObserver();
+        NanoProPanel.close();
+
+        if (currentMode === 'auto') {
+            NanoProBadge.setState('ready');
+        } else {
+            NanoProBadge.setReady();
+        }
+
+        console.log('[NanoPro v2] State reset');
     }
 
     /**
@@ -245,16 +631,36 @@
      */
     function updateUI(result) {
         const { summary } = result;
+        const hasItemNoWarnings = result.itemNoWarnings && result.itemNoWarnings.length > 0;
+        const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
+        const isCaution = hasItemNoWarnings || hasTotalMismatch;
+
+        const badgeEl = NanoProOverlay.getShadow()?.querySelector('.nanopro-badge');
+
+        if (isCaution && badgeEl) {
+            badgeEl.classList.add('has-caution');
+        } else if (badgeEl) {
+            badgeEl.classList.remove('has-caution');
+        }
 
         if (summary.invalid > 0) {
             NanoProBadge.setInvalid(summary.invalid, summary.total);
         } else if (summary.incomplete > 0) {
             NanoProBadge.setIncomplete();
+        } else if (isCaution) {
+            NanoProBadge.setIncomplete();
+            let cautionMessages = [];
+            if (hasTotalMismatch) cautionMessages.push('Total Mismatch');
+            if (hasItemNoWarnings) cautionMessages.push(`${result.itemNoWarnings.length} Item_No Caution${result.itemNoWarnings.length > 1 ? 's' : ''}`);
+
+            const textEl = badgeEl?.querySelector('.nanopro-badge-text');
+            if (textEl) {
+                textEl.textContent = `⚠️ ` + cautionMessages.join(' | ');
+            }
         } else {
             NanoProBadge.setValid(summary.total);
         }
 
-        // Update panel content
         NanoProPanel.render(result);
     }
 
@@ -274,10 +680,12 @@
      */
     function cleanup() {
         NanoProSelector.cancel();
+        clearAutoDetect();
+        teardownMutationObserver();
         NanoProOverlay.remove();
         isInitialized = false;
         validationResult = null;
-        console.log('[NanoPro] Cleaned up');
+        console.log('[NanoPro v2] Cleaned up');
     }
 
     /**
@@ -285,18 +693,28 @@
      */
     window.NanoPro = {
         select: startSelectionMode,
+        autoDetect: runAutoDetection,
         getResult: () => validationResult,
         getLastSelection: () => lastSelection,
+        getMode: () => currentMode,
+        setMode: async (mode) => {
+            if (mode === 'auto' || mode === 'manual') {
+                currentMode = mode;
+                await saveMode(mode);
+                updateBadgeForMode();
+            }
+        },
         reset: resetState,
         cleanup: cleanup,
         reinitialize: () => {
             cleanup();
             setTimeout(initialize, 100);
         },
-        // Debug helpers
         debug: {
             captureRegion: (sel) => NanoProCapture.extractTextFromRegion(sel || lastSelection),
             parseTable: (texts) => NanoProTableParser.parseTable(texts),
+            detectTable: () => NanoProAutoDetector.detect(),
+            diagnose: () => NanoProAutoDetector.diagnose()
         }
     };
 
@@ -307,12 +725,12 @@
         setTimeout(initialize, 100);
     }
 
-    console.log('[NanoPro] Content script loaded (Selection Mode)');
+    console.log('[NanoPro v2] Content script loaded');
 
     // Listen for keyboard shortcut commands from background script
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.type === 'NANOPRO_COMMAND') {
-            console.log('[NanoPro] Received command:', message.command);
+            console.log('[NanoPro v2] Received command:', message.command);
 
             switch (message.command) {
                 case 'start-selection':
@@ -322,17 +740,20 @@
                     if (validationResult) {
                         NanoProPanel.toggle();
                     } else {
-                        startSelectionMode();
+                        handleRefresh();
                     }
                     break;
                 case 'reset-extension':
                     resetState();
                     break;
+                case 'toggle-mode':
+                    toggleMode();
+                    break;
             }
 
             sendResponse({ success: true });
         }
-        return true; // Keep message channel open for async response
+        return true;
     });
 
 })();
