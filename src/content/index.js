@@ -23,12 +23,14 @@
 
     // State
     let isInitialized = false;
+    let currentMode = 'auto'; // 'auto' | 'manual'
     let validationResult = null;
     let lastSelection = null;
     let currentUrl = window.location.href;
-    let currentMode = 'manual';  // v2: 'manual' or 'auto'
-    let mutationObserver = null;
     let autoDetectTimer = null;
+    let autoPollTimer = null;
+    let mutationObserver = null;
+    let lastDetectedStateHash = null;
 
     /**
      * Initialize the extension
@@ -179,36 +181,51 @@
         clearAutoDetect();
         console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms`);
         autoDetectTimer = setTimeout(runAutoDetection, CONFIG.autoDetectDelay);
+        
+        // Start non-intrusive 2-second background polling
+        autoPollTimer = setInterval(() => {
+            if (currentMode === 'auto') {
+                runAutoDetection(0, true); // true = isBackgroundPoll
+            }
+        }, 2000);
     }
 
     /**
-     * Clear pending auto-detection
+     * Clear pending auto-detection and background polling
      */
     function clearAutoDetect() {
         if (autoDetectTimer) {
             clearTimeout(autoDetectTimer);
             autoDetectTimer = null;
         }
+        if (autoPollTimer) {
+            clearInterval(autoPollTimer);
+            autoPollTimer = null;
+        }
     }
 
     /**
      * Run automatic table detection and validation
      */
-    async function runAutoDetection(retryCount = 0) {
+    async function runAutoDetection(retryCount = 0, isBackgroundPoll = false) {
         if (currentMode !== 'auto') return;
 
-        console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
-        NanoProBadge.setLoading();
+        if (!isBackgroundPoll) {
+             console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
+             NanoProBadge.setLoading();
+        }
 
         try {
             // Use AutoDetector to find and extract table
             const detectResult = NanoProAutoDetector.detect();
 
             if (!detectResult.success) {
-                console.warn('[NanoPro v2] Auto-detection failed:', detectResult.message);
+                if (!isBackgroundPoll) {
+                    console.warn('[NanoPro v2] Auto-detection failed:', detectResult.message);
+                }
 
                 // Retry if table might not have loaded yet
-                if (retryCount < CONFIG.retryAttempts) {
+                if (retryCount < CONFIG.retryAttempts && !isBackgroundPoll) {
                     console.log(`[NanoPro v2] Retrying in ${CONFIG.retryDelay}ms...`);
                     autoDetectTimer = setTimeout(
                         () => runAutoDetection(retryCount + 1),
@@ -218,8 +235,28 @@
                 }
 
                 NanoProBadge.setNoData();
+                lastDetectedStateHash = null;
                 return;
             }
+
+            // --- State Hashing for Performance ---
+            // Create a simple string representation of the parsed table + invoice amount sidebar to check if DOM changed
+            const invoiceAmountEl = NanoProAutoDetector.findInvoiceAmount();
+            const sidebarTotalStr = invoiceAmountEl ? invoiceAmountEl.raw : 'none';
+            const currentStateHash = JSON.stringify(detectResult.rows) + '|' + sidebarTotalStr;
+
+            if (currentStateHash === lastDetectedStateHash) {
+                // The inputs on the screen haven't changed since last validation, silently discard to save cycles
+                return;
+            }
+
+            if (isBackgroundPoll) {
+                console.log(`[NanoPro v2] Background poll detected changes, re-validating...`);
+                NanoProBadge.setLoading();
+            }
+
+            // Cache the new hash
+            lastDetectedStateHash = currentStateHash;
 
             // We have extracted rows — validate them
             processAutoDetectedRows(detectResult.rows, detectResult.columnMapping);
@@ -601,6 +638,7 @@
     function resetState() {
         validationResult = null;
         lastSelection = null;
+        lastDetectedStateHash = null;
         clearAutoDetect();
         teardownMutationObserver();
         NanoProPanel.close();

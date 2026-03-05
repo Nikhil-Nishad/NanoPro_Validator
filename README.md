@@ -14,6 +14,7 @@
 - **Resizable Panel**: Drag the bottom-right corner of the summary panel to resize.
 - **Item_No Validation**: Adds a ⚠️ caution tag when `Item_No` is `-R`, blank, or missing.
 - **Overlay Caution Indicator**: Badge overlay turns yellow and shows a blinking red dot on sum mismatch or Item_No caution.
+- **Smart Auto-Recalculation**: Auto mode now pairs DOM mutation observers with a non-intrusive background polling engine that instantly drops cycles if table inputs haven't fundamentally changed, eliminating UI lag.
 
 ---
 
