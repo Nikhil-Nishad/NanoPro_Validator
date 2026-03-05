@@ -17,8 +17,8 @@
         autoValidate: false,
         observeMutations: true,
         retryAttempts: 3,
-        retryDelay: 1500,
-        autoDetectDelay: 2000  // Wait for React to render
+        retryDelay: 1000,
+        autoDetectDelay: 500  // Wait for React to render
     };
 
     // State
@@ -181,13 +181,13 @@
         clearAutoDetect();
         console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms`);
         autoDetectTimer = setTimeout(runAutoDetection, CONFIG.autoDetectDelay);
-        
-        // Start non-intrusive 2-second background polling
+
+        // Start non-intrusive 1-second background polling for fast recalculation
         autoPollTimer = setInterval(() => {
             if (currentMode === 'auto') {
                 runAutoDetection(0, true); // true = isBackgroundPoll
             }
-        }, 2000);
+        }, 1000);
     }
 
     /**
@@ -211,8 +211,8 @@
         if (currentMode !== 'auto') return;
 
         if (!isBackgroundPoll) {
-             console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
-             NanoProBadge.setLoading();
+            console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
+            NanoProBadge.setLoading();
         }
 
         try {
@@ -449,7 +449,7 @@
             debounceTimer = setTimeout(() => {
                 console.log('[NanoPro v2] Table mutation detected, re-validating...');
                 runAutoDetection();
-            }, 800);
+            }, 300);
         });
 
         mutationObserver.observe(target, {
@@ -679,6 +679,13 @@
             badgeEl.classList.add('has-caution');
         } else if (badgeEl) {
             badgeEl.classList.remove('has-caution');
+        }
+
+        // Trigger shake animation if there are errors or cautions
+        if ((summary.invalid > 0 || isCaution) && badgeEl) {
+            badgeEl.classList.remove('shake');
+            void badgeEl.offsetWidth; // Trigger reflow to restart CSS animation
+            badgeEl.classList.add('shake');
         }
 
         if (summary.invalid > 0) {
