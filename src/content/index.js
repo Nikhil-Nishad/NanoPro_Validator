@@ -391,8 +391,10 @@
                 let reason = null;
 
                 if (itemNo === null || itemNo === undefined) {
-                    // Distinguish: column header exists (value is just empty) vs column not in table
-                    reason = hasItemNoColumn ? 'BLANK' : 'COLUMN_NOT_FOUND';
+                    // Only flag as BLANK if the column actually exists in the table headers
+                    if (hasItemNoColumn) {
+                        reason = 'BLANK';
+                    }
                 } else if (typeof itemNo === 'string' && itemNo.trim() === '') {
                     reason = 'BLANK';
                 } else if (typeof itemNo === 'string' && CAUTION_PATTERN.test(itemNo)) {
@@ -671,7 +673,8 @@
         const { summary } = result;
         const hasItemNoWarnings = result.itemNoWarnings && result.itemNoWarnings.length > 0;
         const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
-        const isCaution = hasItemNoWarnings || hasTotalMismatch;
+        const hasTotalNotFound = result.totalValidation && result.totalValidation.status === 'NOT_FOUND';
+        const isCaution = hasItemNoWarnings || hasTotalMismatch || hasTotalNotFound;
 
         const badgeEl = NanoProOverlay.getShadow()?.querySelector('.nanopro-badge');
 
@@ -696,7 +699,8 @@
             NanoProBadge.setIncomplete();
             let cautionMessages = [];
             if (hasTotalMismatch) cautionMessages.push('Total Mismatch');
-            if (hasItemNoWarnings) cautionMessages.push(`${result.itemNoWarnings.length} Item_No Caution${result.itemNoWarnings.length > 1 ? 's' : ''}`);
+            if (hasTotalNotFound) cautionMessages.push('Missing Total');
+            if (hasItemNoWarnings) cautionMessages.push(`${result.itemNoWarnings.length} Item Warnings`);
 
             const textEl = badgeEl?.querySelector('.nanopro-badge-text');
             if (textEl) {
