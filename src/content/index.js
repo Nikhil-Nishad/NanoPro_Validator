@@ -26,11 +26,11 @@
     let currentMode = 'auto'; // 'auto' | 'manual'
     let validationResult = null;
     let lastSelection = null;
-    let currentUrl = window.location.href;
     let autoDetectTimer = null;
     let autoPollTimer = null;
     let mutationObserver = null;
     let lastDetectedStateHash = null;
+    let initializedForFile = null;
 
     /**
      * Initialize the extension
@@ -81,17 +81,13 @@
         // Update badge for current mode
         updateBadgeForMode();
 
-        // Watch for page navigation (SPA support)
-        setupNavigationWatcher();
-
-
-        // v2: Start auto-detection if in auto mode
+        // Start auto-detection if in auto mode
         if (currentMode === 'auto') {
             scheduleAutoDetect();
         }
 
         isInitialized = true;
-        console.log(`[NanoPro v2] Initialization complete — Mode: ${currentMode}`);
+        console.log(`[NanoPro v3] Initialization complete — Mode: ${currentMode}`);
     }
 
     /**
@@ -99,6 +95,14 @@
      */
     function isNanonetsPage() {
         return window.location.href.includes('nanonets.com');
+    }
+
+    /**
+     * Check if current page is a single file page
+     */
+    function isSingleFilePage() {
+        const hash = window.location.hash;
+        return /^#\/ocr\/test\/[^/]+\/[^/?]+/.test(hash);
     }
 
 
@@ -383,7 +387,18 @@
 
         try {
             const warnings = [];
-            const CAUTION_PATTERN = /^\s*-\s*R\s*$/i;
+            // Flag if it ends with -R (case insensitive, ignoring trailing spaces)
+            const ENDS_WITH_R_PATTERN = /-\s*R\s*$/i; 
+
+            // First pass: check if ANY item_no ends with -R
+            let hasAnyDashR = false;
+            for (let i = 0; i < result.results.length; i++) {
+                const itemNo = rawItemNos[i] !== undefined ? rawItemNos[i] : null;
+                if (typeof itemNo === 'string' && ENDS_WITH_R_PATTERN.test(itemNo)) {
+                    hasAnyDashR = true;
+                    break;
+                }
+            }
 
             for (let i = 0; i < result.results.length; i++) {
                 const itemNo = rawItemNos[i] !== undefined ? rawItemNos[i] : null;
@@ -397,8 +412,9 @@
                     }
                 } else if (typeof itemNo === 'string' && itemNo.trim() === '') {
                     reason = 'BLANK';
-                } else if (typeof itemNo === 'string' && CAUTION_PATTERN.test(itemNo)) {
-                    reason = 'DASH_R';
+                } else if (hasAnyDashR && !ENDS_WITH_R_PATTERN.test(itemNo)) {
+                    // Rule: If any item ends with -R, ALL items must end with -R
+                    reason = 'MISSING_DASH_R';
                 }
 
                 if (reason) {
@@ -425,7 +441,7 @@
                 console.log(`[NanoPro] Item_No: ${warnings.length} caution(s) found:`,
                     warnings.map(w => `Row ${w.rowNumber}: ${w.reason} ("${w.value}")`));
             } else {
-                console.log('[NanoPro] Item_No: All rows OK');
+                console.log('[NanoPro] Item_No: All rows OK (-R consistency matched)');
             }
 
         } catch (e) {
@@ -594,43 +610,52 @@
      * Setup watcher for page navigation (SPA detection)
      */
     function setupNavigationWatcher() {
-        const originalPushState = history.pushState;
-        const originalReplaceState = history.replaceState;
-
-        history.pushState = function (...args) {
-            originalPushState.apply(this, args);
-            handleNavigation();
-        };
-
-        history.replaceState = function (...args) {
-            originalReplaceState.apply(this, args);
-            handleNavigation();
-        };
-
+        // Fallback for native popstate events
         window.addEventListener('popstate', handleNavigation);
+        window.addEventListener('hashchange', handleNavigation);
 
+        // React SPA polling: Check URL hash changes periodically since 
+        // isolated content scripts cannot reliably intercept history.pushState 
+        // without injecting scripts into the main page world.
         setInterval(() => {
-            if (window.location.href !== currentUrl) {
+            const currentHash = window.location.hash;
+            if (currentHash !== initializedForFile && 
+                !(initializedForFile === null && !isSingleFilePage())) {
                 handleNavigation();
             }
-        }, 1000);
+        }, 500);
     }
 
     /**
      * Handle page navigation — reset and re-detect
      */
     function handleNavigation() {
-        const newUrl = window.location.href;
+        const currentHash = window.location.hash;
 
-        if (newUrl !== currentUrl) {
-            console.log('[NanoPro v2] Page changed, resetting...');
-            currentUrl = newUrl;
+        if (!isSingleFilePage()) {
+            if (isInitialized) {
+                console.log('[NanoPro v3] Left single file page, cleaning up...');
+                cleanup();
+                initializedForFile = null;
+            }
+            return;
+        }
+
+        if (currentHash === initializedForFile) {
+            return; // Already initialized for this file
+        }
+
+        console.log(`[NanoPro v3] Entered single file page: ${currentHash}`);
+        initializedForFile = currentHash;
+
+        if (isInitialized) {
+            console.log('[NanoPro v3] File changed, resetting state...');
             resetState();
-
-            // v2: Re-trigger auto detection if in auto mode
             if (currentMode === 'auto') {
                 scheduleAutoDetect();
             }
+        } else {
+            initialize();
         }
     }
 
@@ -767,14 +792,22 @@
         }
     };
 
-    // Initialize when DOM is ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialize);
-    } else {
-        setTimeout(initialize, 100);
+    // Boot sequence for v3 SPA handling
+    function boot() {
+        if (!isNanonetsPage()) return;
+        
+        setupNavigationWatcher();
+        handleNavigation(); // Trigger initial page load check
     }
 
-    console.log('[NanoPro v2] Content script loaded');
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        setTimeout(boot, 100);
+    }
+
+    console.log('[NanoPro v3] Content script loaded');
 
     // Listen for keyboard shortcut commands from background script
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

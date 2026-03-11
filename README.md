@@ -2,13 +2,15 @@
 
 > Chrome/Edge extension that validates invoice line item calculations on Nanonets review pages.
 
-![Version](https://img.shields.io/badge/version-2.0.2-blue)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
 ---
 
-## 🆕 What's New in 2.0.2
+## 🆕 What's New in 3.0.0
+- **High-Performance SPA Route Detection**: Extension now strictly scopes execution to single-file document paths. A lightweight 500ms hash tracker handles seamless React SPA transitions without hard refreshes.
+- **Item_No Consistency Validation**: If ANY line item's `Item_No` ends with `-R`, the extension enforces that ALL other items must also end with `-R`. Rows violating this consistency are flagged.
 - **Bug Fix**: Line amount is now correctly detected in tables with only 1 row (resolved wide-column alignment issue).
 - **Draggable UI**: Hold `Ctrl` and drag anywhere on the overlay to reposition it.
 - **Resizable Panel**: Drag the bottom-right corner of the summary panel to resize.
@@ -23,7 +25,7 @@
 - **Dual Mode** — Automatic detection or manual table selection
 - **Auto Detection** — Column-first DOM analysis finds Qty, Price, Amount automatically
 - **Invoice Total Validation** — Compares sum of line amounts against sidebar `invoice_amount`
-- **Item_No Validation** — Flags rows where `Item_No` is `-R`, blank, or missing with ⚠️ caution
+- **Item_No Consistency Validation** — Enforces `-R` suffix consistency across all line items and flags missing or blank entries with ⚠️ caution
 - **Visual Table Selection** — Snipping-tool-like interface for manual mode
 - **Draggable UI** — Hold `Ctrl` and drag to reposition the extension overlay
 - **Resizable Panel** — Drag the bottom-right corner to adjust the details panel
@@ -32,7 +34,7 @@
 - **Intelligent Suggestions** — Correction recommendations with confidence scores
 - **Non-Intrusive** — Operates entirely through content script DOM reads (invisible to the page)
 - **Keyboard Shortcuts** — Quick access without mouse
-- **Auto-Reset** — Resets automatically on SPA page navigation
+- **High-Performance Route Tracking** — Strictly limits bounds to single file document paths, automatically cleaning up and resetting state upon SPA hash navigation.
 
 ---
 
@@ -86,12 +88,12 @@
 | ✅ X/X Valid | Green | All calculations correct |
 | ❌ X Errors Found | Red | Some calculations incorrect |
 | ⚠️ Incomplete Data | Orange | Missing values in some rows |
-| ⚠️ Item_No Caution | Orange | Item_No is `-R`, blank, or missing |
+| ⚠️ Item_No Caution | Orange | Item_No is missing `-R` suffix, blank, or missing entirely |
 
 ### Panel Display
 - **Summary Bar**: Count of valid/invalid rows
 - **Each Row**: `Qty × Price = Amount` with status icon
-- **Item_No Caution**: ⚠️ tag on rows where `Item_No` is `-R` (any spacing), blank, or column not found
+- **Item_No Caution**: ⚠️ tag on rows missing `-R` (when another row has it), or if the cell is completely blank
 - **Invoice Total**: Sum of line amounts vs `invoice_amount` (✅ Match / ❌ Mismatch)
 
 ---
@@ -216,6 +218,6 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <strong>NanoPro Validator v2.0.0</strong><br>
+  <strong>NanoPro Validator v3.0.0</strong><br>
   Built with ❤️ for invoice validation accuracy
 </p>
