@@ -325,7 +325,7 @@ const NanoProPanel = (function () {
                 <span>Environment</span>
               </div>
               <div class="nanopro-card-desc" title="${env?.value || ''}">
-                ${envPass ? 'prod' : (env?.message || 'Missing')}
+                ${envPass ? ('prod' + (env?.isRemembered ? ' (remembered)' : '')) : (env?.message || 'Missing')}
               </div>
             </div>
 
@@ -335,7 +335,7 @@ const NanoProPanel = (function () {
                 <span>Trade Partner</span>
               </div>
               <div class="nanopro-card-desc" title="${partner?.value || ''}">
-                ${partnerPass ? (partner.value || 'Present') : (partner?.message || 'Missing')}
+                ${partnerPass ? ((partner.value || 'Present') + (partner?.isRemembered ? ' (remembered)' : '')) : (partner?.message || 'Missing')}
               </div>
             </div>
 
@@ -477,7 +477,7 @@ const NanoProPanel = (function () {
           <div class="nanopro-total-values" style="margin-top: 6px;">
             <span class="nanopro-total-sum">${isMulti ? 'Cumulative Sum' : 'Sum'}: ${sumFormatted}</span>
             <span class="nanopro-total-sep">|</span>
-            <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}</span>
+            <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}${total.isRemembered ? ' (remembered)' : ''}</span>
             ${!isMatch ? `<span class="nanopro-total-sep">|</span><span class="nanopro-total-diff">Diff: ${diffFormatted}</span>` : ''}
           </div>
           ${breakdownItems ? `<div style="margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap;">${breakdownItems}</div>` : ''}

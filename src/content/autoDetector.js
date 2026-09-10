@@ -655,11 +655,18 @@ const NanoProAutoDetector = (function () {
             if (row && seenRows.has(row)) continue;
             if (row) seenRows.add(row);
 
+            const key = row?.getAttribute('data-index') || 
+                        row?.getAttribute('data-rbd-draggable-id') || 
+                        el.getAttribute('data-testid') || 
+                        el.id || 
+                        null;
+
             const val = extractElementValue(el);
             if (val !== '') {
                 results.push({
                     value: val,
                     raw: val,
+                    key: key,
                     selector: 'data-testid'
                 });
             }
@@ -675,12 +682,16 @@ const NanoProAutoDetector = (function () {
                     const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
                     if (row && !seenRows.has(row)) {
                         seenRows.add(row);
+                        const key = row?.getAttribute('data-index') || 
+                                    row?.getAttribute('data-rbd-draggable-id') || 
+                                    row?.id || null;
                         const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
                         const val = extractElementValue(ocrDiv || row);
                         if (val !== '') {
                             results.push({
                                 value: val,
                                 raw: val,
+                                key: key,
                                 selector: 'label-scan'
                             });
                         }
@@ -854,6 +865,55 @@ const NanoProAutoDetector = (function () {
         };
     }
 
+    /**
+     * Check if two URLs or hashes belong to the same document instance (including multi-page pages)
+     * Supports both full URLs and hash strings.
+     * e.g.
+     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6
+     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6
+     */
+    function isSameDocumentInstance(hashA, hashB) {
+        if (!hashA || !hashB) return false;
+        if (hashA === hashB) return true;
+
+        const pattern = /#\/ocr\/test\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
+        const matchA = hashA.match(pattern);
+        const matchB = hashB.match(pattern);
+
+        if (!matchA || !matchB) return false;
+
+        const modelIdA = matchA[1].toLowerCase();
+        const fileIdA = matchA[2].split('?')[0].split('/')[0].toLowerCase();
+        const modelIdB = matchB[1].toLowerCase();
+        const fileIdB = matchB[2].split('?')[0].split('/')[0].toLowerCase();
+
+        if (modelIdA !== modelIdB) return false;
+        if (fileIdA === fileIdB) return true;
+
+        // Check if both are UUIDv1 for pages of the same multipage document
+        const partsA = fileIdA.split('-');
+        const partsB = fileIdB.split('-');
+
+        if (partsA.length === 5 && partsB.length === 5) {
+            const sameNode = partsA[4] === partsB[4];
+            const sameTimeMid = partsA[1] === partsB[1];
+            const sameTimeHi = partsA[2] === partsB[2];
+
+            if (sameNode && sameTimeMid && sameTimeHi) {
+                const lowA = parseInt(partsA[0], 16);
+                const lowB = parseInt(partsB[0], 16);
+                if (!isNaN(lowA) && !isNaN(lowB) && Math.abs(lowA - lowB) <= 0x1000000) {
+                    return true;
+                }
+                if (partsA[0].slice(0, 4) === partsB[0].slice(0, 4)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     function isTableVisible() {
         const el = document.querySelector('[data-rbd-droppable-id]') ||
             document.querySelector(PRIMARY_SELECTOR);
@@ -869,6 +929,7 @@ const NanoProAutoDetector = (function () {
         findTradePartnerName: findTradePartnerName,
         detectPageInfo: detectPageInfo,
         findSidebarFields: findSidebarFields,
+        isSameDocumentInstance: isSameDocumentInstance,
         isTableVisible: isTableVisible,
         PRIMARY_SELECTOR: PRIMARY_SELECTOR
     };
@@ -877,3 +938,7 @@ const NanoProAutoDetector = (function () {
 if (typeof window !== 'undefined') {
     window.NanoProAutoDetector = NanoProAutoDetector;
 }
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = NanoProAutoDetector;
+}
+

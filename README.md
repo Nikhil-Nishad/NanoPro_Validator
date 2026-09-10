@@ -1,16 +1,6 @@
 # 🧮 NanoPro Validator
 
-> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, and rental consistency on Nanonets review pages.
-
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
-![Manifest](https://img.shields.io/badge/manifest-v3-green)
-![License](https://img.shields.io/badge/license-MIT-gray)
-
----
-
-# 🧮 NanoPro Validator
-
-> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, rental consistency, and multi-page cumulative totals on Nanonets review pages.
+> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, rental consistency, virtualized sidebar scrolling memory, and multi-page cumulative totals on Nanonets review pages.
 
 ![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
@@ -27,10 +17,12 @@ The following table and breakdown clearly distinguish what was introduced in **V
 | **Document Page Handling** | Single-page / active DOM table only | **Full Multi-Page Support** + Single-page fallback |
 | **Invoice Total Validation** | Compares active table sum to `invoice_amount` | **Cumulative Multi-Page Sum**: Adds line amounts across all pages/tables to match `invoice_amount` on the last page |
 | **Sidebar Field Checks** | None (only scanned `invoice_amount`) | **Strict Sidebar Validation**: `Environment=prod`, `is_rental` consistency, non-blank `trade_partner_name` |
+| **Virtualized Sidebar Scrolling** | Lost fields scrolled out of DOM view | **Persistent Field Memory**: Remembers fields when user scrolls sidebar to bottom and back to top; shows `(remembered)` status |
 | **Multiple Totals Guard** | Not checked (took first match) | **Multiplicity Error**: Flags error if multiple `invoice_amount` instances exist |
 | **`Item_No` Validation** | Basic `-R` caution tag | **Deep Cross-Validation**: Prohibits standalone `"-R"`; validates `-R` suffix against `is_rental` (`all True` vs `all False`) |
 | **Page Number Detection** | Not supported | **Auto-detects Page Info** (`Page X of Y`) via Nanonets pagination controls |
-| **SPA Route Tracking** | Basic URL listener | **Session-Scoped File Hash Tracking**: Cleans up and isolates multi-page stores between documents |
+| **Multi-Page URL Instance Matching** | Basic URL hash equality check | **UUIDv1 Pattern Matching**: Recognizes page URLs within the same file instance (e.g. `b8c39de8...` vs `b8c39e6e...`) to retain state across pages |
+| **SPA Route Tracking** | Basic URL listener | **Session-Scoped File Hash Tracking**: Cleans up and isolates multi-page stores and sidebar memory between distinct documents |
 | **UI Experience** | Standard row list + total card | **Dedicated Sidebar Fields Grid**, multi-page progress badges, and page-by-page breakdown pills |
 
 ---
@@ -52,20 +44,30 @@ The following table and breakdown clearly distinguish what was introduced in **V
    - **Cumulative Total Aggregation**: For multi-page invoices (`Page 1 of N`), line amounts from tables across **all pages are automatically recorded and summed** as the reviewer navigates through the document.
    - **Last Page Final Invoice Matching**: Enforces that the cumulative sum of all pages equals the final `invoice_amount` (located on the last page).
    - **Smart Navigation Guidance**: Shows informative progress states on earlier pages (`Page 1 of 3 recorded... navigate to page 3 to validate`) and warns if earlier pages were skipped (`Missing earlier pages [1, 2]`).
-2. **Strict Sidebar Field Validations**:
+2. **Multi-Page URL Pattern & Document Instance Matching**:
+   - When flipping pages of a multi-page invoice, Nanonets generates consecutive UUIDv1 page URLs (for example:
+     - Page 1: `https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6`
+     - Page 2: `https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6`
+   - NanoPro recognizes these URLs as belonging to the **same document instance**, preserving cumulative line items and remembered sidebar fields across page transitions.
+   - When a completely different document is opened, all state is automatically reset for pristine isolation.
+3. **Virtualized Sidebar Scrolling & Memory**:
+   - In Nanonets, the sidebar uses virtual scrolling that unmounts elements when scrolled out of view.
+   - Users can manually scroll down the sidebar to review fields and scroll back to the top: NanoPro intercepts scroll events via capture-phase listeners, **remembers every field discovered at any scroll position**, and displays them with a subtle `(remembered)` badge.
+   - All rules (`Environment`, `trade_partner_name`, `is_rental`, `invoice_amount`) evaluate successfully even when the elements are currently unmounted from the DOM.
+4. **Strict Sidebar Field Validations**:
    - **`Environment` Field**: Must be present and strictly equal `"prod"` (case-insensitive: `prod`, `PROD`).
    - **`is_rental` Consistency**: When multiple `is_rental` entries appear in the sidebar, checks that all entries are strictly identical (either all `True` or all `False`).
    - **`trade_partner_name` Presence**: Verifies that `trade_partner_name` is present and not blank or null.
    - **Single `invoice_amount` Check**: Flags an error if duplicate or multiple `invoice_amount` fields are present in the sidebar.
-3. **`Item_No` Rental Cross-Validation**:
+5. **`Item_No` Rental Cross-Validation**:
    - **No Standalone `"-R"`**: `Item_No` cannot be only `"-R"` (flagged as ❌ Error). It must be an actual SKU or text with `-R` suffix.
    - **When `is_rental` is all `True`**: Line items are expected to have the `-R` suffix. Missing suffixes are flagged with ⚠️ Caution.
    - **When `is_rental` is all `False`**: Line items must **NOT** have a `-R` suffix. Unexpected suffixes are flagged as ❌ Errors.
-4. **Document Page Detection**:
+6. **Document Page Detection**:
    - Accurately reads Nanonets pagination controls (`<span>Page</span>`, `<input value="X" max="Y">`, and `<span>of Y</span>`).
-5. **Dedicated Sidebar Fields UI Grid**:
+7. **Dedicated Sidebar Fields UI Grid**:
    - Modern cards for Environment, Trade Partner, is_rental, and Page Info with live pass/fail icons and badges.
-6. **Zero-Purple Design Compliance**:
+8. **Zero-Purple Design Compliance**:
    - Strictly engineered using slate, emerald, sky blue, amber, and coral color tokens.
 
 ---
@@ -80,7 +82,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 8 validation test suites)
+# Run the automated test suite (all 10 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

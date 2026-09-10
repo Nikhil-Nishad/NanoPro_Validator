@@ -608,4 +608,203 @@ console.log('--- Running NanoPro Validation Test Suite ---');
     console.log('  Passed ✅');
 }
 
-console.log('--- ALL 8 TEST SUITES PASSED SUCCESSFULLY! ---');
+// ============================================================
+// TEST 9: Multi-Page URL Pattern & Document Instance Matching
+// ============================================================
+function testDocumentInstanceMatching() {
+    console.log('Test 9: Multi-page URL pattern & document instance matching');
+
+    const AutoDetector = require('../src/content/autoDetector');
+    const isSameInstance = AutoDetector.isSameDocumentInstance;
+
+    const page1Url = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6';
+    const page2Url = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6';
+
+    // 1. User provided 2-page URLs must match as the same instance
+    assert.strictEqual(isSameInstance(page1Url, page2Url), true, 'Two pages of the same invoice must match');
+
+    // 2. Hash-only format must match
+    const page1Hash = '#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6';
+    const page2Hash = '#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6';
+    assert.strictEqual(isSameInstance(page1Hash, page2Hash), true, 'Hash-only format must match');
+
+    // 3. Mixed format (full URL vs hash)
+    assert.strictEqual(isSameInstance(page1Url, page2Hash), true, 'Mixed full URL and hash must match');
+
+    // 4. URLs with query strings or query params
+    const page1Query = page1Url + '?view=review&filter=all';
+    const page2Query = page2Url + '?view=review&page=2';
+    assert.strictEqual(isSameInstance(page1Query, page2Query), true, 'URLs with query params must match');
+
+    // 5. Same exact page
+    assert.strictEqual(isSameInstance(page1Url, page1Url), true, 'Exact same URL must match');
+
+    // 6. Negative: Different model IDs
+    const diffModelUrl = 'https://app.nanonets.com/#/ocr/test/00000000-0000-0000-0000-000000000000/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6';
+    assert.strictEqual(isSameInstance(page1Url, diffModelUrl), false, 'Different model IDs must not match');
+
+    // 7. Negative: Completely different document file ID
+    const diffDocUrl = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    assert.strictEqual(isSameInstance(page1Url, diffDocUrl), false, 'Different document files must not match');
+
+    // 8. Negative: Null / empty / invalid
+    assert.strictEqual(isSameInstance(null, page1Url), false, 'Null input must return false');
+    assert.strictEqual(isSameInstance('', ''), false, 'Empty input must return false');
+
+    console.log('  Passed ✅');
+}
+
+// ============================================================
+// TEST 10: Virtualized Sidebar Scrolling Memory
+// ============================================================
+function testSidebarScrollingMemory() {
+    console.log('Test 10: Virtualized sidebar scrolling memory across scroll positions');
+
+    const AutoDetector = require('../src/content/autoDetector');
+
+    // Simulate sidebar memory store and aggregator
+    let sidebarMemory = {
+        instanceHash: null,
+        environment: null,
+        tradePartnerName: null,
+        invoiceAmount: null,
+        isRentalList: [],
+        pageInfo: null
+    };
+
+    function scanAndRemember(currentHash, liveFields) {
+        if (!AutoDetector.isSameDocumentInstance(sidebarMemory.instanceHash, currentHash)) {
+            sidebarMemory = {
+                instanceHash: currentHash,
+                environment: null,
+                tradePartnerName: null,
+                invoiceAmount: null,
+                isRentalList: [],
+                pageInfo: null
+            };
+        }
+
+        if (liveFields.environment && liveFields.environment.raw) {
+            sidebarMemory.environment = { ...liveFields.environment, isRemembered: false };
+        }
+        if (liveFields.tradePartnerName && liveFields.tradePartnerName.raw) {
+            sidebarMemory.tradePartnerName = { ...liveFields.tradePartnerName, isRemembered: false };
+        }
+        if (liveFields.invoiceAmount && liveFields.invoiceAmount.raw) {
+            sidebarMemory.invoiceAmount = { ...liveFields.invoiceAmount, isRemembered: false };
+        }
+        if (liveFields.isRental && liveFields.isRental.length > 0) {
+            const existingKeys = new Set((sidebarMemory.isRentalList || []).map((item, idx) => item.key || `item_${idx}_${item.raw}`));
+            liveFields.isRental.forEach((item, idx) => {
+                const k = item.key || `item_${sidebarMemory.isRentalList.length}_${item.raw}`;
+                if (!existingKeys.has(k)) {
+                    existingKeys.add(k);
+                    sidebarMemory.isRentalList.push({ ...item, isRemembered: false });
+                }
+            });
+        }
+        if (liveFields.pageInfo) {
+            sidebarMemory.pageInfo = liveFields.pageInfo;
+        }
+    }
+
+    function getEffectiveFields(liveFields) {
+        return {
+            environment: sidebarMemory.environment ? { ...sidebarMemory.environment, isRemembered: !liveFields.environment } : null,
+            tradePartnerName: sidebarMemory.tradePartnerName ? { ...sidebarMemory.tradePartnerName, isRemembered: !liveFields.tradePartnerName } : null,
+            invoiceAmount: sidebarMemory.invoiceAmount ? { ...sidebarMemory.invoiceAmount, isRemembered: !liveFields.invoiceAmount } : null,
+            isRental: sidebarMemory.isRentalList || [],
+            pageInfo: sidebarMemory.pageInfo || liveFields.pageInfo
+        };
+    }
+
+    const docUrl = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6';
+
+    // Step 1: User is at the top of the sidebar. Only invoice_amount is visible in DOM.
+    const scrollPosTop1 = {
+        invoiceAmount: { raw: '250.00', value: 250.00, count: 1, multiple: false },
+        environment: null,
+        tradePartnerName: null,
+        isRental: [],
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    };
+    scanAndRemember(docUrl, scrollPosTop1);
+
+    // Initial check at top: Environment and trade partner not seen yet
+    let effective = getEffectiveFields(scrollPosTop1);
+    let valResult = evaluateSidebarValidation(effective);
+    assert.strictEqual(valResult.isValid, false, 'Should be invalid before scrolling down');
+
+    // Step 2: User manually scrolls sidebar down to the bottom.
+    // invoice_amount is now scrolled out of view (null in DOM), but Environment, is_rental, trade_partner_name are visible!
+    const scrollPosBottom = {
+        invoiceAmount: null,
+        environment: { raw: 'prod', value: 'prod' },
+        tradePartnerName: { raw: 'Global Supplies Inc', value: 'Global Supplies Inc' },
+        isRental: [{ raw: 'False', value: 'False', key: 'row_rental_0' }],
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    };
+    scanAndRemember(docUrl, scrollPosBottom);
+
+    // Step 3: User scrolls back to the top (for personal checking).
+    // In DOM, only invoice_amount is mounted again. Bottom fields are unmounted (null in DOM).
+    const scrollPosTop2 = {
+        invoiceAmount: { raw: '250.00', value: 250.00, count: 1, multiple: false },
+        environment: null,
+        tradePartnerName: null,
+        isRental: [],
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    };
+    // No new fields scanned at top, but getEffectiveFields uses memory!
+    scanAndRemember(docUrl, scrollPosTop2);
+
+    effective = getEffectiveFields(scrollPosTop2);
+
+    // Verify all fields are remembered!
+    assert.ok(effective.environment, 'Environment should be remembered');
+    assert.strictEqual(effective.environment.value, 'prod');
+    assert.strictEqual(effective.environment.isRemembered, true, 'Environment should be flagged as remembered');
+
+    assert.ok(effective.tradePartnerName, 'trade_partner_name should be remembered');
+    assert.strictEqual(effective.tradePartnerName.value, 'Global Supplies Inc');
+    assert.strictEqual(effective.tradePartnerName.isRemembered, true, 'Trade partner should be flagged as remembered');
+
+    assert.strictEqual(effective.isRental.length, 1, 'is_rental should be remembered');
+    assert.strictEqual(effective.isRental[0].value, 'False');
+
+    assert.ok(effective.invoiceAmount, 'invoice_amount is live from DOM');
+    assert.strictEqual(effective.invoiceAmount.value, 250.00);
+    assert.strictEqual(effective.invoiceAmount.isRemembered, false, 'invoice_amount is currently visible in DOM');
+
+    // Now evaluate validation: All rules should PASS without error!
+    valResult = evaluateSidebarValidation(effective);
+    assert.strictEqual(valResult.isValid, true, 'Validation should be valid because all fields were remembered');
+    assert.strictEqual(valResult.errors.length, 0);
+    assert.strictEqual(valResult.environment.status, 'VALID');
+    assert.strictEqual(valResult.tradePartner.status, 'VALID');
+    assert.strictEqual(valResult.isRental.status, 'VALID');
+
+    // Step 4: Navigate to a brand new document instance
+    const newDocUrl = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/11111111-2222-3333-4444-555555555555';
+    scanAndRemember(newDocUrl, {
+        invoiceAmount: { raw: '100.00', value: 100.00, count: 1, multiple: false },
+        environment: null,
+        tradePartnerName: null,
+        isRental: []
+    });
+
+    const newEffective = getEffectiveFields({
+        invoiceAmount: { raw: '100.00', value: 100.00, count: 1, multiple: false }
+    });
+    assert.strictEqual(newEffective.environment, null, 'Memory must be reset on new document instance');
+    assert.strictEqual(newEffective.tradePartnerName, null, 'Memory must be reset on new document instance');
+    assert.strictEqual(newEffective.isRental.length, 0, 'is_rental memory must be reset');
+
+    console.log('  Passed ✅');
+}
+
+testDocumentInstanceMatching();
+testSidebarScrollingMemory();
+
+console.log('--- ALL 10 TEST SUITES PASSED SUCCESSFULLY! ---');
+

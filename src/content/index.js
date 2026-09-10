@@ -39,6 +39,191 @@
         pages: {} // pageNum -> { sumAmount: number, rowCount: number, results: array, timestamp: number }
     };
 
+    // Sidebar fields persistent memory (retained while scrolling within the same document instance)
+    let sidebarMemory = {
+        instanceHash: null,
+        environment: null,
+        tradePartnerName: null,
+        invoiceAmount: null,
+        isRentalList: [],
+        pageInfo: null
+    };
+
+    /**
+     * Check if two URLs belong to the same document instance (including multi-page pages)
+     * e.g.
+     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6
+     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6
+     */
+    function isSameDocumentInstance(hashA, hashB) {
+        if (typeof NanoProAutoDetector !== 'undefined' && NanoProAutoDetector.isSameDocumentInstance) {
+            return NanoProAutoDetector.isSameDocumentInstance(hashA, hashB);
+        }
+        if (!hashA || !hashB) return false;
+        if (hashA === hashB) return true;
+
+        const pattern = /#\/ocr\/test\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
+        const matchA = hashA.match(pattern);
+        const matchB = hashB.match(pattern);
+
+        if (!matchA || !matchB) return false;
+
+        const modelIdA = matchA[1].toLowerCase();
+        const fileIdA = matchA[2].split('?')[0].split('/')[0].toLowerCase();
+        const modelIdB = matchB[1].toLowerCase();
+        const fileIdB = matchB[2].split('?')[0].split('/')[0].toLowerCase();
+
+        if (modelIdA !== modelIdB) return false;
+        if (fileIdA === fileIdB) return true;
+
+        // Check if both are UUIDv1 for pages of the same multipage document
+        const partsA = fileIdA.split('-');
+        const partsB = fileIdB.split('-');
+
+        if (partsA.length === 5 && partsB.length === 5) {
+            const sameNode = partsA[4] === partsB[4];
+            const sameTimeMid = partsA[1] === partsB[1];
+            const sameTimeHi = partsA[2] === partsB[2];
+
+            if (sameNode && sameTimeMid && sameTimeHi) {
+                const lowA = parseInt(partsA[0], 16);
+                const lowB = parseInt(partsB[0], 16);
+                if (!isNaN(lowA) && !isNaN(lowB) && Math.abs(lowA - lowB) <= 0x1000000) {
+                    return true;
+                }
+                if (partsA[0].slice(0, 4) === partsB[0].slice(0, 4)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+
+    /**
+     * Scan sidebar fields and remember them across scrolling
+     * Returns true if any new field was discovered or updated
+     */
+    function scanAndRememberSidebarFields() {
+        if (!NanoProAutoDetector.findSidebarFields) return false;
+
+        const currentHash = window.location.hash;
+        if (!isSameDocumentInstance(sidebarMemory.instanceHash, currentHash)) {
+            sidebarMemory = {
+                instanceHash: currentHash,
+                environment: null,
+                tradePartnerName: null,
+                invoiceAmount: null,
+                isRentalList: [],
+                pageInfo: null
+            };
+        }
+
+        const live = NanoProAutoDetector.findSidebarFields();
+        let hasChanges = false;
+
+        // 1. Environment
+        if (live.environment && live.environment.raw) {
+            const prevVal = sidebarMemory.environment?.raw;
+            if (prevVal !== live.environment.raw) {
+                sidebarMemory.environment = { ...live.environment, isRemembered: false };
+                hasChanges = true;
+            }
+        }
+
+        // 2. Trade Partner Name
+        if (live.tradePartnerName && live.tradePartnerName.raw) {
+            const prevVal = sidebarMemory.tradePartnerName?.raw;
+            if (prevVal !== live.tradePartnerName.raw) {
+                sidebarMemory.tradePartnerName = { ...live.tradePartnerName, isRemembered: false };
+                hasChanges = true;
+            }
+        }
+
+        // 3. Invoice Amount
+        if (live.invoiceAmount && live.invoiceAmount.raw) {
+            const prevRaw = sidebarMemory.invoiceAmount?.raw;
+            const prevMult = sidebarMemory.invoiceAmount?.multiple;
+            if (prevRaw !== live.invoiceAmount.raw || prevMult !== live.invoiceAmount.multiple) {
+                sidebarMemory.invoiceAmount = { ...live.invoiceAmount, isRemembered: false };
+                hasChanges = true;
+            }
+        }
+
+        // 4. is_rental (accumulate unique instances seen while scrolling)
+        if (live.isRental && live.isRental.length > 0) {
+            const existingKeys = new Set((sidebarMemory.isRentalList || []).map((item, idx) => item.key || `item_${idx}_${item.raw}`));
+            let addedNew = false;
+            const updatedList = [...(sidebarMemory.isRentalList || [])];
+
+            live.isRental.forEach((item, idx) => {
+                const k = item.key || `item_${updatedList.length}_${item.raw}`;
+                if (!existingKeys.has(k)) {
+                    existingKeys.add(k);
+                    updatedList.push({ ...item, isRemembered: false });
+                    addedNew = true;
+                }
+            });
+
+            if (addedNew) {
+                sidebarMemory.isRentalList = updatedList;
+                hasChanges = true;
+            }
+        }
+
+        // 5. Page Info
+        if (live.pageInfo && live.pageInfo.source !== 'default-single-page') {
+            const prevRaw = sidebarMemory.pageInfo?.raw;
+            if (prevRaw !== live.pageInfo.raw) {
+                sidebarMemory.pageInfo = live.pageInfo;
+                hasChanges = true;
+            }
+        }
+
+        return hasChanges;
+    }
+
+    /**
+     * Get effective sidebar fields combining live DOM elements with remembered fields
+     */
+    function getEffectiveSidebarFields() {
+        scanAndRememberSidebarFields();
+
+        const isLiveEnv = !!NanoProAutoDetector.findEnvironment();
+        const isLiveTP = !!NanoProAutoDetector.findTradePartnerName();
+        const isLiveInv = !!NanoProAutoDetector.findInvoiceAmount();
+
+        return {
+            environment: sidebarMemory.environment ? { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : null,
+            tradePartnerName: sidebarMemory.tradePartnerName ? { ...sidebarMemory.tradePartnerName, isRemembered: !isLiveTP } : null,
+            invoiceAmount: sidebarMemory.invoiceAmount ? { ...sidebarMemory.invoiceAmount, isRemembered: !isLiveInv } : null,
+            isRental: sidebarMemory.isRentalList && sidebarMemory.isRentalList.length > 0 ? sidebarMemory.isRentalList : [],
+            pageInfo: sidebarMemory.pageInfo || NanoProAutoDetector.detectPageInfo()
+        };
+    }
+
+    let scrollCaptureTimer = null;
+    function setupScrollCapture() {
+        window.addEventListener('scroll', (e) => {
+            if (scrollCaptureTimer) clearTimeout(scrollCaptureTimer);
+            scrollCaptureTimer = setTimeout(() => {
+                if (currentMode === 'auto' || validationResult) {
+                    const hasNew = scanAndRememberSidebarFields();
+                    if (hasNew && validationResult) {
+                        console.log('[NanoPro v3] Discovered new sidebar fields on scroll, updating...');
+                        const fields = getEffectiveSidebarFields();
+                        attachTotalValidation(validationResult, fields.invoiceAmount, fields.pageInfo);
+                        const sidebarResult = attachSidebarValidation(validationResult, fields);
+                        const rawItemNos = (validationResult.results || []).map(r => r.itemNoValue ?? null);
+                        attachItemNoValidation(validationResult, rawItemNos, true, sidebarResult?.rentalStatus);
+                        updateUI(validationResult);
+                    }
+                }
+            }, 250);
+        }, { capture: true, passive: true });
+    }
+
     /**
      * Initialize the extension
      */
@@ -92,6 +277,9 @@
         if (currentMode === 'auto') {
             scheduleAutoDetect();
         }
+
+        // Setup capture-phase scroll listener to remember sidebar fields when scrolling
+        setupScrollCapture();
 
         isInitialized = true;
         console.log(`[NanoPro v3] Initialization complete — Mode: ${currentMode}`);
@@ -252,9 +440,7 @@
 
             // --- State Hashing for Performance ---
             // Create a simple string representation of the parsed table + sidebar fields to check if DOM changed
-            const sidebarFields = NanoProAutoDetector.findSidebarFields ? 
-                NanoProAutoDetector.findSidebarFields() : 
-                { invoiceAmount: NanoProAutoDetector.findInvoiceAmount() };
+            const sidebarFields = getEffectiveSidebarFields();
 
             const isRentalHash = (sidebarFields.isRental || []).map(r => r.raw).join(',');
             const sidebarHash = [
@@ -296,9 +482,7 @@
     function processAutoDetectedRows(rows, columnMapping, sidebarFields = null) {
         console.log(`[NanoPro v3] Validating ${rows.length} auto-detected rows`);
 
-        const fields = sidebarFields || (NanoProAutoDetector.findSidebarFields ? 
-            NanoProAutoDetector.findSidebarFields() : 
-            { invoiceAmount: NanoProAutoDetector.findInvoiceAmount(), pageInfo: NanoProAutoDetector.detectPageInfo() });
+        const fields = sidebarFields || getEffectiveSidebarFields();
 
         const pageInfo = fields.pageInfo || { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
         const currentPage = pageInfo.currentPage || 1;
@@ -344,7 +528,7 @@
         pageSum = NanoProParser.round(pageSum, 2);
 
         // Update multiPageStore
-        if (multiPageStore.fileHash !== window.location.hash) {
+        if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash)) {
             multiPageStore.fileHash = window.location.hash;
             multiPageStore.pages = {};
             multiPageStore.lastInvoiceAmount = null;
@@ -488,6 +672,7 @@
                     summedRows: pageSummedRows,
                     invoiceAmount: invoiceAmount.value,
                     invoiceAmountRaw: invoiceAmount.raw,
+                    isRemembered: !!invoiceAmount.isRemembered,
                     difference: diff,
                     tolerance: tolerance,
                     status: isMatch ? 'MATCH' : 'MISMATCH',
@@ -577,6 +762,7 @@
                 pageBreakdown: pageBreakdown,
                 invoiceAmount: invoiceAmount.value,
                 invoiceAmountRaw: invoiceAmount.raw,
+                isRemembered: !!invoiceAmount.isRemembered,
                 difference: diff,
                 tolerance: tolerance,
                 status: isMatch ? 'MATCH' : 'MISMATCH',
@@ -703,13 +889,15 @@
                 environment: {
                     status: envStatus,
                     value: env?.raw?.trim() || null,
-                    message: envMessage
+                    message: envMessage,
+                    isRemembered: !!env?.isRemembered
                 },
                 isRental: rentalStatus,
                 tradePartner: {
                     status: tradePartnerStatus,
                     value: tradePartner?.raw?.trim() || null,
-                    message: tradePartnerMessage
+                    message: tradePartnerMessage,
+                    isRemembered: !!tradePartner?.isRemembered
                 },
                 invoiceAmountMultiplicity: invoiceAmountMultiplicity,
                 pageInfo: pageInfo
@@ -971,9 +1159,7 @@
             }
 
             // Step 4b: Attach sidebar & multi-page validations
-            const fields = NanoProAutoDetector.findSidebarFields ? 
-                NanoProAutoDetector.findSidebarFields() : 
-                { invoiceAmount: NanoProAutoDetector.findInvoiceAmount(), pageInfo: NanoProAutoDetector.detectPageInfo() };
+            const fields = getEffectiveSidebarFields();
 
             const pageInfo = fields.pageInfo || { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
             const currentPage = pageInfo.currentPage || 1;
@@ -994,7 +1180,7 @@
             pageSum = NanoProParser.round(pageSum, 2);
 
             // Update multiPageStore
-            if (multiPageStore.fileHash !== window.location.hash) {
+            if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash)) {
                 multiPageStore.fileHash = window.location.hash;
                 multiPageStore.pages = {};
                 multiPageStore.lastInvoiceAmount = null;
@@ -1070,11 +1256,22 @@
             return; // Already initialized for this file
         }
 
-        console.log(`[NanoPro v3] Entered single file page: ${currentHash}`);
+        // Check if navigation is within the SAME document instance (e.g. flipping pages of same multipage invoice)
+        if (initializedForFile && isSameDocumentInstance(initializedForFile, currentHash)) {
+            console.log(`[NanoPro v3] Multi-page navigation within same document instance: ${currentHash}`);
+            initializedForFile = currentHash;
+            // Retain multiPageStore and sidebarMemory! Re-run detection on the new page.
+            if (currentMode === 'auto') {
+                scheduleAutoDetect();
+            }
+            return;
+        }
+
+        console.log(`[NanoPro v3] Entered new document instance: ${currentHash}`);
         initializedForFile = currentHash;
 
         if (isInitialized) {
-            console.log('[NanoPro v3] File changed, resetting state...');
+            console.log('[NanoPro v3] New document opened, resetting state...');
             resetState();
             if (currentMode === 'auto') {
                 scheduleAutoDetect();
@@ -1097,6 +1294,14 @@
             lastInvoiceAmount: null,
             pages: {}
         };
+        sidebarMemory = {
+            instanceHash: window.location.hash,
+            environment: null,
+            tradePartnerName: null,
+            invoiceAmount: null,
+            isRentalList: [],
+            pageInfo: null
+        };
         clearAutoDetect();
         teardownMutationObserver();
         NanoProPanel.close();
@@ -1107,7 +1312,7 @@
             NanoProBadge.setReady();
         }
 
-        console.log('[NanoPro v3] State reset');
+        console.log('[NanoPro v3] State reset for new document instance');
     }
 
     /**
