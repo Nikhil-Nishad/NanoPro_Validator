@@ -723,7 +723,8 @@ const NanoProAutoDetector = (function () {
 
     /**
      * Detect document page info (current page and total pages)
-     * Identifies page numbers next to or within spans with text "Page"
+     * Identifies page numbers next to or within spans with text "Page".
+     * If page number is not present, defaults to single page (Page 1 of 1).
      */
     function detectPageInfo() {
         try {
@@ -743,14 +744,17 @@ const NanoProAutoDetector = (function () {
                             const afterText = (afterInput?.textContent || '').trim();
                             const afterMatch = afterText.match(/(?:of|\/)\s*(\d+)/i);
 
-                            const totalPages = afterMatch ? parseInt(afterMatch[1], 10) :
-                                              (maxVal ? parseInt(maxVal, 10) : null);
-                            const currentPage = curVal ? parseInt(curVal, 10) : 1;
+                            const parsedTotal = afterMatch ? parseInt(afterMatch[1], 10) :
+                                              (maxVal ? parseInt(maxVal, 10) : 1);
+                            const totalPages = (parsedTotal && parsedTotal > 0) ? parsedTotal : 1;
+                            const parsedCur = curVal ? parseInt(curVal, 10) : 1;
+                            const currentPage = (parsedCur && parsedCur > 0) ? parsedCur : 1;
 
                             const info = {
                                 currentPage: currentPage,
                                 totalPages: totalPages,
-                                raw: `Page ${currentPage}${totalPages ? ' of ' + totalPages : ''}`,
+                                isMultiPage: totalPages > 1,
+                                raw: `Page ${currentPage} of ${totalPages}`,
                                 source: 'nanonets-pager'
                             };
                             console.log(`[NanoPro AutoDetector] Page info detected (pager): Current=${info.currentPage}, Total=${info.totalPages}`);
@@ -768,10 +772,13 @@ const NanoProAutoDetector = (function () {
                 // Direct text "Page 1 of 3", "Page 1 / 3", "Page: 1 of 3"
                 const directMatch = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i);
                 if (directMatch) {
+                    const currentPage = parseInt(directMatch[1], 10) || 1;
+                    const totalPages = parseInt(directMatch[2], 10) || 1;
                     const info = {
-                        currentPage: parseInt(directMatch[1], 10),
-                        totalPages: parseInt(directMatch[2], 10),
-                        raw: text,
+                        currentPage: currentPage,
+                        totalPages: totalPages,
+                        isMultiPage: totalPages > 1,
+                        raw: `Page ${currentPage} of ${totalPages}`,
                         source: 'direct-text'
                     };
                     console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
@@ -785,10 +792,13 @@ const NanoProAutoDetector = (function () {
                         const nextText = (nextEl.textContent || '').trim();
                         const siblingMatch = nextText.match(/^(\d+)\s*(?:of|\/)\s*(\d+)/i);
                         if (siblingMatch) {
+                            const currentPage = parseInt(siblingMatch[1], 10) || 1;
+                            const totalPages = parseInt(siblingMatch[2], 10) || 1;
                             const info = {
-                                currentPage: parseInt(siblingMatch[1], 10),
-                                totalPages: parseInt(siblingMatch[2], 10),
-                                raw: `${text} ${nextText}`,
+                                currentPage: currentPage,
+                                totalPages: totalPages,
+                                isMultiPage: totalPages > 1,
+                                raw: `Page ${currentPage} of ${totalPages}`,
                                 source: 'next-sibling'
                             };
                             console.log(`[NanoPro AutoDetector] Page info detected (sibling): Current=${info.currentPage}, Total=${info.totalPages}`);
@@ -802,10 +812,13 @@ const NanoProAutoDetector = (function () {
                         const pMatch = parentText.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i) ||
                                       parentText.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
                         if (pMatch) {
+                            const currentPage = parseInt(pMatch[1], 10) || 1;
+                            const totalPages = parseInt(pMatch[2], 10) || 1;
                             const info = {
-                                currentPage: parseInt(pMatch[1], 10),
-                                totalPages: parseInt(pMatch[2], 10),
-                                raw: parentText,
+                                currentPage: currentPage,
+                                totalPages: totalPages,
+                                isMultiPage: totalPages > 1,
+                                raw: `Page ${currentPage} of ${totalPages}`,
                                 source: 'parent-text'
                             };
                             console.log(`[NanoPro AutoDetector] Page info detected (parent): Current=${info.currentPage}, Total=${info.totalPages}`);
@@ -817,7 +830,15 @@ const NanoProAutoDetector = (function () {
         } catch (e) {
             console.warn('[NanoPro AutoDetector] Error detecting page info:', e);
         }
-        return null;
+
+        // Fallback: If page number is not there, consider it as only one page
+        return {
+            currentPage: 1,
+            totalPages: 1,
+            isMultiPage: false,
+            raw: 'Page 1 of 1',
+            source: 'default-single-page'
+        };
     }
 
     /**

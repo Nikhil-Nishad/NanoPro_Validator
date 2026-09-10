@@ -8,81 +8,111 @@
 
 ---
 
-## 🆕 What's New in 3.0.0
-- **Sidebar Field Validations**:
-  - **`Environment` Check**: Verifies that `Environment` is present in the sidebar and equals `"prod"` (case-insensitive: `prod`, `PROD`, etc.). Non-prod or missing environments are flagged as errors.
-  - **`is_rental` Multi-Value Consistency**: When multiple `is_rental` entries appear in the sidebar, checks that all values are identical (either all `True` or all `False`). Mixed values or missing fields are flagged as errors.
-  - **`trade_partner_name` Presence**: Verifies that `trade_partner_name` is present in the sidebar and is not blank or null.
-  - **Single `invoice_amount` Verification**: Enforces that only a single instance/number for `invoice_amount` exists in the sidebar. Multiple instances are flagged as errors.
-- **`Item_No` Cross-Validation & Suffix Rules**:
-  - **Not Only `-R`**: An `Item_No` cannot be just `"-R"` or `"-r"` (flagged as ❌ error). It can only contain `-R` as a suffix following content (e.g. `SKU123-R`).
-  - **Rental Cross-Validation**:
-    - When `is_rental` is **all True**: line items should have the `-R` suffix. Missing suffixes are flagged with ⚠️ caution.
-    - When `is_rental` is **all False**: line items must **NOT** have `-R` suffix. Unexpected suffixes are flagged as ❌ errors.
-- **Document Page Number Detection**:
-  - Full-fledged detection of current page and total pages (e.g., `Page 1 of 4`) by reading Nanonets pagination controls (`Page` span, page input, and `of X` indicator).
-  - Displayed live in the Sidebar Fields section of the validation panel.
-- **High-Performance SPA Route Detection**: Strictly scopes execution to single-file document paths with seamless 500ms hash tracking across React SPA transitions.
-- **Dedicated Sidebar Fields Panel UI**: Clean, modern card grid in the details panel showing real-time validation statuses for Environment, Trade Partner, is_rental, and Page Info.
-- **Smart Auto-Recalculation**: Live re-validation hashes both table rows and all sidebar field states to instantly drop redundant cycles while instantly catching edits.
+# 🧮 NanoPro Validator
+
+> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, rental consistency, and multi-page cumulative totals on Nanonets review pages.
+
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Manifest](https://img.shields.io/badge/manifest-v3-green)
+![License](https://img.shields.io/badge/license-MIT-gray)
 
 ---
 
-## ✨ Features
+## 🔄 Version Comparison: Version 2.0 vs Version 3.0
 
-- **Dual Mode** — Automatic detection or manual table selection
-- **Auto Detection** — Column-first DOM analysis finds Qty, Price, Amount automatically
-- **Sidebar Field Validation** — Validates `Environment` (`prod`), `is_rental` consistency, and non-blank `trade_partner_name`
-- **Invoice Total Validation** — Compares sum of line amounts against sidebar `invoice_amount` (detects multiple totals)
-- **Item_No Cross-Validation** — Enforces `-R` suffix consistency linked to `is_rental` status and forbids standalone `-R`
-- **Document Page Detection** — Identifies current page and total document pages
-- **Visual Table Selection** — Snipping-tool-like interface for manual mode
-- **Draggable UI** — Hold `Ctrl` and drag to reposition the extension overlay
-- **Resizable Panel** — Drag the bottom-right corner to adjust the details panel
-- **Smart Column Detection** — Identifies Qty, Item_Price, Line_Amount from MUI headers
-- **Multi-Row Validation** — Validates all rows: `Qty × Price = Amount`
-- **Intelligent Suggestions** — Correction recommendations with confidence scores
-- **Non-Intrusive** — Operates entirely through content script DOM reads (invisible to the page)
-- **Keyboard Shortcuts** — Quick access without mouse
-- **High-Performance Route Tracking** — Strictly limits bounds to single file document paths, automatically cleaning up and resetting state upon SPA hash navigation
+The following table and breakdown clearly distinguish what was introduced in **Version 2.0** versus the advanced capabilities added in **Version 3.0**:
+
+| Capability | Version 2.0 (Foundations) | Version 3.0 (Enterprise Suite) |
+|---|---|---|
+| **Document Page Handling** | Single-page / active DOM table only | **Full Multi-Page Support** + Single-page fallback |
+| **Invoice Total Validation** | Compares active table sum to `invoice_amount` | **Cumulative Multi-Page Sum**: Adds line amounts across all pages/tables to match `invoice_amount` on the last page |
+| **Sidebar Field Checks** | None (only scanned `invoice_amount`) | **Strict Sidebar Validation**: `Environment=prod`, `is_rental` consistency, non-blank `trade_partner_name` |
+| **Multiple Totals Guard** | Not checked (took first match) | **Multiplicity Error**: Flags error if multiple `invoice_amount` instances exist |
+| **`Item_No` Validation** | Basic `-R` caution tag | **Deep Cross-Validation**: Prohibits standalone `"-R"`; validates `-R` suffix against `is_rental` (`all True` vs `all False`) |
+| **Page Number Detection** | Not supported | **Auto-detects Page Info** (`Page X of Y`) via Nanonets pagination controls |
+| **SPA Route Tracking** | Basic URL listener | **Session-Scoped File Hash Tracking**: Cleans up and isolates multi-page stores between documents |
+| **UI Experience** | Standard row list + total card | **Dedicated Sidebar Fields Grid**, multi-page progress badges, and page-by-page breakdown pills |
 
 ---
 
-## 📦 Installation
-
-### Chrome / Edge (Developer Mode)
-
-1. Download or clone this repository
-2. Open `chrome://extensions` (Chrome) or `edge://extensions` (Edge)
-3. Enable **Developer mode** (toggle in top-right)
-4. Click **Load unpacked**
-5. Select the `NanoPro_extension` folder
-6. Navigate to any Nanonets review page
+### 📦 What's in Version 2.0
+- **Dual Mode Operation**:
+  - **Auto Mode**: Heuristic column and container detection finding `Qty`, `Item_Price`, and `Line_Amount` automatically.
+  - **Manual Mode**: Visual drag-to-snip overlay tool to manually select line item tables.
+- **Row-Level Math Validation**: Validates `Qty × Price = Amount` for every row with configurable tolerance (±$0.05).
+- **Intelligent Correction Suggester**: Suggests expected numbers with confidence scores for erroneous rows.
+- **Basic Single-Table Total Check**: Sums the active table's line amounts and checks against the sidebar `invoice_amount`.
+- **Draggable & Resizable Shadow DOM UI**: Floating badge (`Ctrl+Drag` to move) and panel (resizable corner) that never leak styles into or conflict with Nanonets styles.
 
 ---
 
-## 🚀 Usage
+### 🚀 What's New in Version 3.0
+1. **Multi-Page Line Amount Accumulation & Single-Page Fallback**:
+   - **Single-Page Fallback**: If page numbers are not detected, the document is seamlessly treated as a 1-page document (`Page 1 of 1`).
+   - **Cumulative Total Aggregation**: For multi-page invoices (`Page 1 of N`), line amounts from tables across **all pages are automatically recorded and summed** as the reviewer navigates through the document.
+   - **Last Page Final Invoice Matching**: Enforces that the cumulative sum of all pages equals the final `invoice_amount` (located on the last page).
+   - **Smart Navigation Guidance**: Shows informative progress states on earlier pages (`Page 1 of 3 recorded... navigate to page 3 to validate`) and warns if earlier pages were skipped (`Missing earlier pages [1, 2]`).
+2. **Strict Sidebar Field Validations**:
+   - **`Environment` Field**: Must be present and strictly equal `"prod"` (case-insensitive: `prod`, `PROD`).
+   - **`is_rental` Consistency**: When multiple `is_rental` entries appear in the sidebar, checks that all entries are strictly identical (either all `True` or all `False`).
+   - **`trade_partner_name` Presence**: Verifies that `trade_partner_name` is present and not blank or null.
+   - **Single `invoice_amount` Check**: Flags an error if duplicate or multiple `invoice_amount` fields are present in the sidebar.
+3. **`Item_No` Rental Cross-Validation**:
+   - **No Standalone `"-R"`**: `Item_No` cannot be only `"-R"` (flagged as ❌ Error). It must be an actual SKU or text with `-R` suffix.
+   - **When `is_rental` is all `True`**: Line items are expected to have the `-R` suffix. Missing suffixes are flagged with ⚠️ Caution.
+   - **When `is_rental` is all `False`**: Line items must **NOT** have a `-R` suffix. Unexpected suffixes are flagged as ❌ Errors.
+4. **Document Page Detection**:
+   - Accurately reads Nanonets pagination controls (`<span>Page</span>`, `<input value="X" max="Y">`, and `<span>of Y</span>`).
+5. **Dedicated Sidebar Fields UI Grid**:
+   - Modern cards for Environment, Trade Partner, is_rental, and Page Info with live pass/fail icons and badges.
+6. **Zero-Purple Design Compliance**:
+   - Strictly engineered using slate, emerald, sky blue, amber, and coral color tokens.
 
-### Auto Mode (Default after first toggle)
-1. Look for the badge at the top of the page
-2. Click **Auto/Manual** toggle to switch to Auto mode
-3. Extension automatically detects the table and sidebar fields
-4. Invoice total, environment, rental status, trade partner, and item numbers are validated automatically
+---
 
-### Manual Mode
-1. Click the badge or press `Alt+Shift+S`
-2. Drag to select the table area containing line items
-3. Release to validate
+## 🛠️ Build, Reload & Setup Instructions
 
-### Keyboard Shortcuts
+Because NanoPro is built as a pure, lightweight Manifest V3 Chrome/Edge extension without bulky bundlers or heavy dependencies, **there is no complex compilation or build step**.
 
-| Shortcut | Action |
-|----------|--------|
-| `Alt+Shift+S` | Start table selection (manual mode) |
-| `Alt+Shift+V` | Toggle validation panel |
-| `Alt+Shift+R` | Reset extension state |
-| `Alt+Shift+M` | Toggle Auto/Manual mode |
-| `Ctrl+Drag`   | Move the extension overlay |
+### 1. Validating the Extension ("Build")
+To verify that all JavaScript source files and test suites pass with zero syntax errors:
+```bash
+# Verify JavaScript syntax across all modules
+node -c src/background.js src/content/*.js src/ui/*.js
+
+# Run the automated test suite (all 8 validation test suites)
+node tests/sidebar_validation_test.js
+```
+
+### 2. How to Load the Extension in Chrome or Edge
+1. Open your browser:
+   - **Chrome**: Go to `chrome://extensions`
+   - **Edge**: Go to `edge://extensions`
+2. In the top-right corner, toggle **Developer mode** to **ON**.
+3. Click the **Load unpacked** button in the top-left.
+4. In the folder picker dialog, select the project directory:
+   `d:\Personal\Projects\NanoPro_extension` (the folder containing `manifest.json`).
+5. The extension **NanoPro Validator v3.0.0** is now active!
+
+### 3. How to Reload After Code Updates
+Whenever you update code or pull changes:
+1. Open `chrome://extensions`.
+2. Locate the **NanoPro Validator** card.
+3. Click the **Reload (🔄) icon** on the card.
+4. Switch back to your Nanonets browser tab and press **F5** (or Ctrl+R) to refresh the page.
+5. The latest version is immediately loaded and active.
+
+### 4. How to Use the Extension
+1. Open any Nanonets invoice review page (e.g. `https://app.nanonets.com/#/ocr/test/...`).
+2. The **NanoPro badge** will appear floating at the top of the page.
+3. Click the **Auto/Manual** button on the badge to switch to **Auto** mode (default).
+4. **Validating Single-Page Documents**:
+   - The extension auto-detects the table, validates `Qty × Price = Amount`, checks sidebar fields, and confirms the single-page total against `invoice_amount`.
+5. **Validating Multi-Page Invoices**:
+   - On **Page 1**, the extension records Page 1's line amounts and displays `📄 Page 1/N Recorded`.
+   - Click **Next** (or flip pages) in Nanonets. The extension automatically records Page 2, Page 3, etc.
+   - On the **Last Page** (where `invoice_amount` is located), the extension sums line amounts across all pages and validates the cumulative total against `invoice_amount`.
+   - Click the badge or press `Alt+Shift+V` to open the panel for the complete page-by-page breakdown and sidebar field statuses.
 
 ---
 

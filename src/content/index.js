@@ -28,9 +28,16 @@
     let lastSelection = null;
     let autoDetectTimer = null;
     let autoPollTimer = null;
-    let mutationObserver = null;
     let lastDetectedStateHash = null;
     let initializedForFile = null;
+
+    // Multi-page document state store (session scoped per invoice file)
+    let multiPageStore = {
+        fileHash: null,
+        totalPages: 1,
+        lastInvoiceAmount: null,
+        pages: {} // pageNum -> { sumAmount: number, rowCount: number, results: array, timestamp: number }
+    };
 
     /**
      * Initialize the extension
@@ -287,11 +294,15 @@
      * Process auto-detected rows through validation pipeline
      */
     function processAutoDetectedRows(rows, columnMapping, sidebarFields = null) {
-        console.log(`[NanoPro v2] Validating ${rows.length} auto-detected rows`);
+        console.log(`[NanoPro v3] Validating ${rows.length} auto-detected rows`);
 
         const fields = sidebarFields || (NanoProAutoDetector.findSidebarFields ? 
             NanoProAutoDetector.findSidebarFields() : 
-            { invoiceAmount: NanoProAutoDetector.findInvoiceAmount() });
+            { invoiceAmount: NanoProAutoDetector.findInvoiceAmount(), pageInfo: NanoProAutoDetector.detectPageInfo() });
+
+        const pageInfo = fields.pageInfo || { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
+        const currentPage = pageInfo.currentPage || 1;
+        const totalPages = pageInfo.totalPages || 1;
 
         // Convert raw string values to the {value, confidence} format the validator expects
         // NanoProParser.parse() returns { value: number, confidence: 0-1, original: string }
@@ -306,20 +317,51 @@
         const rawItemNos = rows.map(row => row.item_no ?? null);
         const hasItemNoColumn = !!(columnMapping && columnMapping.item_no);
 
-        console.log('[NanoPro v2] Validation input:', validationRows);
-        console.log('[NanoPro v2] Item_No column detected:', hasItemNoColumn);
+        console.log('[NanoPro v3] Validation input:', validationRows);
+        console.log('[NanoPro v3] Item_No column detected:', hasItemNoColumn);
 
         // Validate calculations
         validationResult = NanoProValidator.validateAll(validationRows);
 
         if (!validationResult.success) {
-            console.error('[NanoPro v2] Validation failed:', validationResult.error);
+            console.error('[NanoPro v3] Validation failed:', validationResult.error);
             NanoProBadge.setNoData();
             return;
         }
 
+        // Calculate current page's sum of Line_Amount
+        let pageSum = 0;
+        let pageSummedRows = 0;
+        for (const row of validationResult.results) {
+            if (row.actual !== undefined && row.actual !== null) {
+                pageSum += row.actual;
+                pageSummedRows++;
+            } else if (row.originalRow?.amount?.value !== null && row.originalRow?.amount?.value !== undefined) {
+                pageSum += row.originalRow.amount.value;
+                pageSummedRows++;
+            }
+        }
+        pageSum = NanoProParser.round(pageSum, 2);
+
+        // Update multiPageStore
+        if (multiPageStore.fileHash !== window.location.hash) {
+            multiPageStore.fileHash = window.location.hash;
+            multiPageStore.pages = {};
+            multiPageStore.lastInvoiceAmount = null;
+        }
+        multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
+        multiPageStore.pages[currentPage] = {
+            sumAmount: pageSum,
+            rowCount: pageSummedRows,
+            results: validationResult.results,
+            timestamp: Date.now()
+        };
+        if (fields.invoiceAmount) {
+            multiPageStore.lastInvoiceAmount = fields.invoiceAmount;
+        }
+
         // Attach supplementary validations
-        attachTotalValidation(validationResult, fields.invoiceAmount);
+        attachTotalValidation(validationResult, fields.invoiceAmount, pageInfo);
         const sidebarResult = attachSidebarValidation(validationResult, fields);
         attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn, sidebarResult?.rentalStatus);
 
@@ -327,55 +369,85 @@
         updateUI(validationResult);
         NanoProPanel.render(validationResult);
 
-        console.log('[NanoPro v2] Auto-validation complete:', validationResult.summary);
+        console.log('[NanoPro v3] Auto-validation complete:', validationResult.summary);
 
         // Start mutation observer for live re-validation
         setupMutationObserver();
     }
 
     /**
-     * Attach total validation: sum of amounts vs invoice_amount from sidebar
-     * Enriches validationResult.totalValidation — never mutates existing data
+     * Attach total validation:
+     * - If single page: compares current page line amount sum with invoice_amount
+     * - If multi-page: accumulates Line_Amount from all pages/tables and verifies
+     *   that the cumulative sum equals the invoice_amount (located on the last page)
      */
-    function attachTotalValidation(result, invoiceAmountInput = null) {
+    function attachTotalValidation(result, invoiceAmountInput = null, pageInfo = null) {
         if (!result || !result.success || !result.results) return;
 
         try {
-            // Sum all amounts from validated rows (use 'actual' for valid/invalid, raw for incomplete)
-            let totalAmount = 0;
-            let summedRows = 0;
+            const page = pageInfo || (result.sidebarValidation?.pageInfo) || NanoProAutoDetector.detectPageInfo();
+            const currentPage = page?.currentPage || 1;
+            const totalPages = Math.max(page?.totalPages || 1, multiPageStore.totalPages || 1);
+            const isMultiPage = totalPages > 1;
 
+            // Current page line amount sum
+            let pageSum = 0;
+            let pageSummedRows = 0;
             for (const row of result.results) {
                 if (row.actual !== undefined && row.actual !== null) {
-                    totalAmount += row.actual;
-                    summedRows++;
+                    pageSum += row.actual;
+                    pageSummedRows++;
                 } else if (row.originalRow && row.originalRow.amount && row.originalRow.amount.value !== null) {
-                    totalAmount += row.originalRow.amount.value;
-                    summedRows++;
+                    pageSum += row.originalRow.amount.value;
+                    pageSummedRows++;
                 }
             }
+            pageSum = NanoProParser.round(pageSum, 2);
 
-            totalAmount = NanoProParser.round(totalAmount, 2);
+            // Cumulative sum across all pages in multiPageStore
+            let cumulativeSum = 0;
+            let totalSummedRows = 0;
+            const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
+            const pageBreakdown = {};
 
-            // Find invoice_amount from sidebar
-            const invoiceAmount = invoiceAmountInput || NanoProAutoDetector.findInvoiceAmount();
+            for (const p of recordedPages) {
+                const pData = multiPageStore.pages[p];
+                cumulativeSum += pData.sumAmount;
+                totalSummedRows += pData.rowCount;
+                pageBreakdown[p] = pData.sumAmount;
+            }
+            cumulativeSum = NanoProParser.round(cumulativeSum, 2);
 
-            if (!invoiceAmount) {
-                result.totalValidation = {
-                    sumAmount: totalAmount,
-                    summedRows: summedRows,
-                    invoiceAmount: null,
-                    status: 'NOT_FOUND',
-                    message: 'invoice_amount not found in sidebar'
-                };
-                console.log(`[NanoPro] Total: Sum=${totalAmount} | Invoice Amount: not found`);
-                return;
+            const missingPages = [];
+            for (let p = 1; p <= totalPages; p++) {
+                if (!multiPageStore.pages[p]) {
+                    missingPages.push(p);
+                }
+            }
+            const hasAllPages = missingPages.length === 0;
+            const isLastPage = (currentPage === totalPages);
+
+            // Find invoice_amount from parameter, sidebar or cache
+            const invoiceAmount = invoiceAmountInput || 
+                                  NanoProAutoDetector.findInvoiceAmount() || 
+                                  multiPageStore.lastInvoiceAmount;
+
+            if (invoiceAmount) {
+                multiPageStore.lastInvoiceAmount = invoiceAmount;
             }
 
-            if (invoiceAmount.multiple) {
+            // --- Multiplicity check ---
+            if (invoiceAmount && invoiceAmount.multiple) {
                 result.totalValidation = {
-                    sumAmount: totalAmount,
-                    summedRows: summedRows,
+                    isMultiPage: isMultiPage,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    pageSum: pageSum,
+                    sumAmount: isMultiPage ? cumulativeSum : pageSum,
+                    summedRows: isMultiPage ? totalSummedRows : pageSummedRows,
+                    recordedPages: recordedPages,
+                    missingPages: missingPages,
+                    pageBreakdown: pageBreakdown,
                     invoiceAmount: invoiceAmount.value,
                     invoiceAmountRaw: invoiceAmount.raw,
                     status: 'MULTIPLE_INSTANCES',
@@ -385,13 +457,124 @@
                 return;
             }
 
-            const diff = NanoProParser.round(Math.abs(totalAmount - invoiceAmount.value), 2);
+            // --- SINGLE PAGE DOCUMENT ---
+            if (!isMultiPage) {
+                if (!invoiceAmount) {
+                    result.totalValidation = {
+                        isMultiPage: false,
+                        currentPage: 1,
+                        totalPages: 1,
+                        pageSum: pageSum,
+                        sumAmount: pageSum,
+                        summedRows: pageSummedRows,
+                        invoiceAmount: null,
+                        status: 'NOT_FOUND',
+                        message: 'invoice_amount not found in sidebar'
+                    };
+                    console.log(`[NanoPro] Total: Sum=${pageSum} | Invoice Amount: not found`);
+                    return;
+                }
+
+                const diff = NanoProParser.round(Math.abs(pageSum - invoiceAmount.value), 2);
+                const tolerance = 0.10;
+                const isMatch = diff <= tolerance;
+
+                result.totalValidation = {
+                    isMultiPage: false,
+                    currentPage: 1,
+                    totalPages: 1,
+                    pageSum: pageSum,
+                    sumAmount: pageSum,
+                    summedRows: pageSummedRows,
+                    invoiceAmount: invoiceAmount.value,
+                    invoiceAmountRaw: invoiceAmount.raw,
+                    difference: diff,
+                    tolerance: tolerance,
+                    status: isMatch ? 'MATCH' : 'MISMATCH',
+                    selector: invoiceAmount.selector
+                };
+
+                console.log(`[NanoPro] Single Page Total: Sum=${pageSum} | Invoice=${invoiceAmount.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
+                return;
+            }
+
+            // --- MULTI PAGE DOCUMENT ---
+            // If we are NOT on the last page and don't have all pages recorded:
+            if (!isLastPage && !hasAllPages) {
+                result.totalValidation = {
+                    isMultiPage: true,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    pageSum: pageSum,
+                    sumAmount: cumulativeSum,
+                    summedRows: totalSummedRows,
+                    recordedPages: recordedPages,
+                    missingPages: missingPages,
+                    pageBreakdown: pageBreakdown,
+                    invoiceAmount: invoiceAmount?.value || null,
+                    status: 'MULTI_PAGE_PENDING',
+                    message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. Navigate to page ${totalPages} for final invoice total.`
+                };
+                console.log(`[NanoPro] MultiPage: Page ${currentPage}/${totalPages} recorded (Sum: ${pageSum}, Cumulative: ${cumulativeSum}). Pending page ${totalPages}.`);
+                return;
+            }
+
+            // We are on the last page, or we have recorded all pages!
+            if (!invoiceAmount) {
+                result.totalValidation = {
+                    isMultiPage: true,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    pageSum: pageSum,
+                    sumAmount: cumulativeSum,
+                    summedRows: totalSummedRows,
+                    recordedPages: recordedPages,
+                    missingPages: missingPages,
+                    pageBreakdown: pageBreakdown,
+                    invoiceAmount: null,
+                    status: 'NOT_FOUND',
+                    message: `invoice_amount not found on last page (Page ${totalPages})`
+                };
+                console.log(`[NanoPro] MultiPage: Cumulative Sum=${cumulativeSum} | invoice_amount not found on last page`);
+                return;
+            }
+
+            if (!hasAllPages) {
+                // On last page, but skipped earlier pages
+                result.totalValidation = {
+                    isMultiPage: true,
+                    currentPage: currentPage,
+                    totalPages: totalPages,
+                    pageSum: pageSum,
+                    sumAmount: cumulativeSum,
+                    summedRows: totalSummedRows,
+                    recordedPages: recordedPages,
+                    missingPages: missingPages,
+                    pageBreakdown: pageBreakdown,
+                    invoiceAmount: invoiceAmount.value,
+                    invoiceAmountRaw: invoiceAmount.raw,
+                    status: 'PAGES_MISSING',
+                    message: `Missing earlier pages: [${missingPages.join(', ')}] of ${totalPages}. Please visit all pages to accumulate all line items.`
+                };
+                console.warn(`[NanoPro] MultiPage: Missing pages [${missingPages.join(', ')}] of ${totalPages}`);
+                return;
+            }
+
+            // All pages recorded & invoice_amount present! Compare cumulative sum to invoice_amount
+            const diff = NanoProParser.round(Math.abs(cumulativeSum - invoiceAmount.value), 2);
             const tolerance = 0.10;
             const isMatch = diff <= tolerance;
 
             result.totalValidation = {
-                sumAmount: totalAmount,
-                summedRows: summedRows,
+                isMultiPage: true,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                pageSum: pageSum,
+                sumAmount: cumulativeSum,
+                summedRows: totalSummedRows,
+                recordedPages: recordedPages,
+                missingPages: [],
+                pageBreakdown: pageBreakdown,
                 invoiceAmount: invoiceAmount.value,
                 invoiceAmountRaw: invoiceAmount.raw,
                 difference: diff,
@@ -400,7 +583,7 @@
                 selector: invoiceAmount.selector
             };
 
-            console.log(`[NanoPro] Total: Sum=${totalAmount} | Invoice=${invoiceAmount.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
+            console.log(`[NanoPro] MultiPage Total (${totalPages} pages): Cumulative Sum=${cumulativeSum} | Invoice=${invoiceAmount.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
 
         } catch (e) {
             console.warn('[NanoPro] Total validation error:', e.message);
@@ -787,8 +970,48 @@
                 return;
             }
 
-            // Step 4b: Attach invoice total validation
-            attachTotalValidation(validationResult);
+            // Step 4b: Attach sidebar & multi-page validations
+            const fields = NanoProAutoDetector.findSidebarFields ? 
+                NanoProAutoDetector.findSidebarFields() : 
+                { invoiceAmount: NanoProAutoDetector.findInvoiceAmount(), pageInfo: NanoProAutoDetector.detectPageInfo() };
+
+            const pageInfo = fields.pageInfo || { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
+            const currentPage = pageInfo.currentPage || 1;
+            const totalPages = pageInfo.totalPages || 1;
+
+            // Compute page sum
+            let pageSum = 0;
+            let pageSummedRows = 0;
+            for (const row of validationResult.results) {
+                if (row.actual !== undefined && row.actual !== null) {
+                    pageSum += row.actual;
+                    pageSummedRows++;
+                } else if (row.originalRow?.amount?.value !== null && row.originalRow?.amount?.value !== undefined) {
+                    pageSum += row.originalRow.amount.value;
+                    pageSummedRows++;
+                }
+            }
+            pageSum = NanoProParser.round(pageSum, 2);
+
+            // Update multiPageStore
+            if (multiPageStore.fileHash !== window.location.hash) {
+                multiPageStore.fileHash = window.location.hash;
+                multiPageStore.pages = {};
+                multiPageStore.lastInvoiceAmount = null;
+            }
+            multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
+            multiPageStore.pages[currentPage] = {
+                sumAmount: pageSum,
+                rowCount: pageSummedRows,
+                results: validationResult.results,
+                timestamp: Date.now()
+            };
+            if (fields.invoiceAmount) {
+                multiPageStore.lastInvoiceAmount = fields.invoiceAmount;
+            }
+
+            attachTotalValidation(validationResult, fields.invoiceAmount, pageInfo);
+            attachSidebarValidation(validationResult, fields);
 
             // Step 5: Update UI
             updateUI(validationResult);
@@ -868,6 +1091,12 @@
         validationResult = null;
         lastSelection = null;
         lastDetectedStateHash = null;
+        multiPageStore = {
+            fileHash: window.location.hash,
+            totalPages: 1,
+            lastInvoiceAmount: null,
+            pages: {}
+        };
         clearAutoDetect();
         teardownMutationObserver();
         NanoProPanel.close();
@@ -878,7 +1107,7 @@
             NanoProBadge.setReady();
         }
 
-        console.log('[NanoPro v2] State reset');
+        console.log('[NanoPro v3] State reset');
     }
 
     /**
@@ -905,12 +1134,14 @@
         const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
         const hasTotalNotFound = result.totalValidation && result.totalValidation.status === 'NOT_FOUND';
         const hasTotalMultiple = result.totalValidation && result.totalValidation.status === 'MULTIPLE_INSTANCES';
+        const hasTotalPagesMissing = result.totalValidation && result.totalValidation.status === 'PAGES_MISSING';
+        const isMultiPagePending = result.totalValidation && result.totalValidation.status === 'MULTI_PAGE_PENDING';
 
         // Errors: calculation mismatches, sidebar failures, item_no critical errors, multiple totals
         const totalErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + (hasTotalMultiple ? 1 : 0);
 
-        // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing
-        const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound;
+        // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing, or missing earlier pages
+        const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound || hasTotalPagesMissing;
 
         const badgeEl = NanoProOverlay.getShadow()?.querySelector('.nanopro-badge');
 
@@ -942,7 +1173,8 @@
             NanoProBadge.setIncomplete();
 
             let cautionMessages = [];
-            if (hasTotalMismatch) cautionMessages.push('Total Mismatch');
+            if (hasTotalPagesMissing) cautionMessages.push(`Missing Pages`);
+            if (hasTotalMismatch) cautionMessages.push(result.totalValidation?.isMultiPage ? 'Multi Total Mismatch' : 'Total Mismatch');
             if (hasTotalNotFound) cautionMessages.push('Missing Total');
             if (itemNoWarnings.length > 0) cautionMessages.push(`${itemNoWarnings.length} Item Caution${itemNoWarnings.length > 1 ? 's' : ''}`);
 
@@ -953,6 +1185,16 @@
         } else {
             if (badgeEl) badgeEl.classList.remove('has-caution');
             NanoProBadge.setValid(summary?.total || 0);
+
+            const textEl = badgeEl?.querySelector('.nanopro-badge-text');
+            if (textEl) {
+                if (isMultiPagePending) {
+                    const tv = result.totalValidation;
+                    textEl.textContent = `📄 Page ${tv.currentPage}/${tv.totalPages} (${tv.recordedPages.length}/${tv.totalPages} Scanned)`;
+                } else if (result.totalValidation?.isMultiPage && result.totalValidation?.status === 'MATCH') {
+                    textEl.textContent = `✅ All ${result.totalValidation.totalPages} Pages Match`;
+                }
+            }
         }
 
         NanoProPanel.render(result);

@@ -637,6 +637,11 @@ const NanoProOverlay = (function () {
       color: #991b1b;
     }
 
+    .nanopro-pill-info {
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+
     .nanopro-sidebar-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -789,6 +794,18 @@ const NanoProOverlay = (function () {
       font-weight: 600;
       color: #374151;
       margin-bottom: 4px;
+    }
+    .nanopro-total-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .nanopro-total-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
     }
     .nanopro-total-values {
       font-size: 15px;

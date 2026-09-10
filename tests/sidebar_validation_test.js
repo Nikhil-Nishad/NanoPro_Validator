@@ -405,4 +405,207 @@ console.log('--- Running NanoPro Validation Test Suite ---');
     console.log('  Passed ✅');
 }
 
-console.log('--- ALL TESTS PASSED SUCCESSFULLY! ---');
+// Test 7: Fallback when page number is not present
+{
+    console.log('Test 7: Fallback when page number is absent');
+    function fallbackPageInfo(detected) {
+        if (!detected) {
+            return {
+                currentPage: 1,
+                totalPages: 1,
+                isMultiPage: false,
+                raw: 'Page 1 of 1',
+                source: 'default-single-page'
+            };
+        }
+        const total = (detected.totalPages && detected.totalPages > 0) ? detected.totalPages : 1;
+        const current = (detected.currentPage && detected.currentPage > 0) ? detected.currentPage : 1;
+        return {
+            currentPage: current,
+            totalPages: total,
+            isMultiPage: total > 1,
+            raw: `Page ${current} of ${total}`
+        };
+    }
+
+    const absentPage = fallbackPageInfo(null);
+    assert.strictEqual(absentPage.currentPage, 1);
+    assert.strictEqual(absentPage.totalPages, 1);
+    assert.strictEqual(absentPage.isMultiPage, false);
+
+    const singlePageNoTotal = fallbackPageInfo({ currentPage: 1, totalPages: null });
+    assert.strictEqual(singlePageNoTotal.currentPage, 1);
+    assert.strictEqual(singlePageNoTotal.totalPages, 1);
+    assert.strictEqual(singlePageNoTotal.isMultiPage, false);
+
+    const multiPage = fallbackPageInfo({ currentPage: 2, totalPages: 4 });
+    assert.strictEqual(multiPage.currentPage, 2);
+    assert.strictEqual(multiPage.totalPages, 4);
+    assert.strictEqual(multiPage.isMultiPage, true);
+    console.log('  Passed ✅');
+}
+
+// Test 8: Multi-page Line_Amount accumulation & total validation
+{
+    console.log('Test 8: Multi-page Line_Amount accumulation and invoice total matching');
+
+    function evaluateTotalValidation(multiPageStore, currentPage, totalPages, pageRows, invoiceAmount) {
+        // Compute page sum
+        let pageSum = 0;
+        let pageSummedRows = 0;
+        for (const row of pageRows) {
+            const amt = row.actual !== undefined ? row.actual : (row.amount || 0);
+            pageSum += amt;
+            pageSummedRows++;
+        }
+        pageSum = Math.round(pageSum * 100) / 100;
+
+        // Update multiPageStore
+        multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
+        multiPageStore.pages[currentPage] = {
+            sumAmount: pageSum,
+            rowCount: pageSummedRows
+        };
+        if (invoiceAmount) {
+            multiPageStore.lastInvoiceAmount = invoiceAmount;
+        }
+
+        const effectiveTotalPages = multiPageStore.totalPages;
+        const isMultiPage = effectiveTotalPages > 1;
+
+        let cumulativeSum = 0;
+        let totalSummedRows = 0;
+        const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
+        const pageBreakdown = {};
+
+        for (const p of recordedPages) {
+            const pData = multiPageStore.pages[p];
+            cumulativeSum += pData.sumAmount;
+            totalSummedRows += pData.rowCount;
+            pageBreakdown[p] = pData.sumAmount;
+        }
+        cumulativeSum = Math.round(cumulativeSum * 100) / 100;
+
+        const missingPages = [];
+        for (let p = 1; p <= effectiveTotalPages; p++) {
+            if (!multiPageStore.pages[p]) {
+                missingPages.push(p);
+            }
+        }
+        const hasAllPages = missingPages.length === 0;
+        const isLastPage = (currentPage === effectiveTotalPages);
+        const effectiveInvoiceAmount = invoiceAmount || multiPageStore.lastInvoiceAmount;
+
+        if (effectiveInvoiceAmount && effectiveInvoiceAmount.multiple) {
+            return { status: 'MULTIPLE_INSTANCES', count: effectiveInvoiceAmount.count };
+        }
+
+        if (!isMultiPage) {
+            if (!effectiveInvoiceAmount) {
+                return { status: 'NOT_FOUND', sumAmount: pageSum };
+            }
+            const diff = Math.round(Math.abs(pageSum - effectiveInvoiceAmount.value) * 100) / 100;
+            return {
+                status: diff <= 0.10 ? 'MATCH' : 'MISMATCH',
+                sumAmount: pageSum,
+                invoiceAmount: effectiveInvoiceAmount.value,
+                difference: diff
+            };
+        }
+
+        // Multi-page handling
+        if (!isLastPage && !hasAllPages) {
+            return {
+                status: 'MULTI_PAGE_PENDING',
+                currentPage,
+                totalPages: effectiveTotalPages,
+                pageSum,
+                sumAmount: cumulativeSum,
+                recordedPages,
+                missingPages
+            };
+        }
+
+        if (!effectiveInvoiceAmount) {
+            return {
+                status: 'NOT_FOUND',
+                sumAmount: cumulativeSum,
+                totalPages: effectiveTotalPages
+            };
+        }
+
+        if (!hasAllPages) {
+            return {
+                status: 'PAGES_MISSING',
+                currentPage,
+                totalPages: effectiveTotalPages,
+                sumAmount: cumulativeSum,
+                invoiceAmount: effectiveInvoiceAmount.value,
+                recordedPages,
+                missingPages
+            };
+        }
+
+        const diff = Math.round(Math.abs(cumulativeSum - effectiveInvoiceAmount.value) * 100) / 100;
+        return {
+            status: diff <= 0.10 ? 'MATCH' : 'MISMATCH',
+            isMultiPage: true,
+            totalPages: effectiveTotalPages,
+            sumAmount: cumulativeSum,
+            invoiceAmount: effectiveInvoiceAmount.value,
+            difference: diff,
+            recordedPages,
+            pageBreakdown
+        };
+    }
+
+    const store = { totalPages: 3, pages: {}, lastInvoiceAmount: null };
+
+    // Step 1: Visit Page 1 (Sum = 100.00, no invoice amount yet on page 1)
+    const resPage1 = evaluateTotalValidation(store, 1, 3, [{ actual: 50.00 }, { actual: 50.00 }], null);
+    assert.strictEqual(resPage1.status, 'MULTI_PAGE_PENDING');
+    assert.strictEqual(resPage1.pageSum, 100.00);
+    assert.strictEqual(resPage1.sumAmount, 100.00);
+    assert.deepStrictEqual(resPage1.recordedPages, [1]);
+    assert.deepStrictEqual(resPage1.missingPages, [2, 3]);
+
+    // Step 2: Visit Page 2 (Sum = 150.00)
+    const resPage2 = evaluateTotalValidation(store, 2, 3, [{ actual: 75.00 }, { actual: 75.00 }], null);
+    assert.strictEqual(resPage2.status, 'MULTI_PAGE_PENDING');
+    assert.strictEqual(resPage2.pageSum, 150.00);
+    assert.strictEqual(resPage2.sumAmount, 250.00); // 100 + 150
+    assert.deepStrictEqual(resPage2.recordedPages, [1, 2]);
+    assert.deepStrictEqual(resPage2.missingPages, [3]);
+
+    // Step 3: Visit Page 3 (Last Page! Sum = 50.00, invoice_amount = 300.00)
+    const resPage3 = evaluateTotalValidation(store, 3, 3, [{ actual: 50.00 }], { value: 300.00, multiple: false });
+    assert.strictEqual(resPage3.status, 'MATCH');
+    assert.strictEqual(resPage3.sumAmount, 300.00); // 100 + 150 + 50 = 300
+    assert.strictEqual(resPage3.invoiceAmount, 300.00);
+    assert.strictEqual(resPage3.difference, 0.00);
+    assert.deepStrictEqual(resPage3.pageBreakdown, { 1: 100.00, 2: 150.00, 3: 50.00 });
+
+    // Step 4: Verify mismatch detection if invoice_amount on last page is 350.00
+    const storeMismatch = {
+        totalPages: 2,
+        pages: {
+            1: { sumAmount: 100.00, rowCount: 1 }
+        },
+        lastInvoiceAmount: null
+    };
+    const resMismatch = evaluateTotalValidation(storeMismatch, 2, 2, [{ actual: 100.00 }], { value: 250.00, multiple: false });
+    assert.strictEqual(resMismatch.status, 'MISMATCH');
+    assert.strictEqual(resMismatch.sumAmount, 200.00);
+    assert.strictEqual(resMismatch.invoiceAmount, 250.00);
+    assert.strictEqual(resMismatch.difference, 50.00);
+
+    // Step 5: Verify PAGES_MISSING when user opens last page first
+    const storeSkipped = { totalPages: 3, pages: {}, lastInvoiceAmount: null };
+    const resSkipped = evaluateTotalValidation(storeSkipped, 3, 3, [{ actual: 50.00 }], { value: 200.00, multiple: false });
+    assert.strictEqual(resSkipped.status, 'PAGES_MISSING');
+    assert.deepStrictEqual(resSkipped.missingPages, [1, 2]);
+
+    console.log('  Passed ✅');
+}
+
+console.log('--- ALL 8 TEST SUITES PASSED SUCCESSFULLY! ---');
