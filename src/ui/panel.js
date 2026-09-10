@@ -124,12 +124,28 @@ const NanoProPanel = (function () {
         </div>
       `;
 
+      // Render sidebar field validations
+      if (validationResult.sidebarValidation) {
+        html += this.renderSidebarValidation(validationResult.sidebarValidation);
+      }
+
       // Item_No caution summary
       const itemNoWarnings = validationResult.itemNoWarnings || [];
-      if (itemNoWarnings.length > 0) {
+      const itemNoErrors = validationResult.itemNoErrors || [];
+      const itemNoCautions = itemNoWarnings.filter(w => w.severity !== 'ERROR');
+
+      if (itemNoErrors.length > 0) {
+        html += `
+          <div class="nanopro-error-summary">
+            ❌ ${itemNoErrors.length} Item_No error${itemNoErrors.length > 1 ? 's' : ''}
+          </div>
+        `;
+      }
+
+      if (itemNoCautions.length > 0) {
         html += `
           <div class="nanopro-caution-summary">
-            ⚠️ ${itemNoWarnings.length} Item_No caution${itemNoWarnings.length > 1 ? 's' : ''}
+            ⚠️ ${itemNoCautions.length} Item_No caution${itemNoCautions.length > 1 ? 's' : ''}
           </div>
         `;
       }
@@ -254,25 +270,99 @@ const NanoProPanel = (function () {
     }
 
     /**
-     * Render Item_No caution tag for a row (if applicable)
+     * Render Item_No caution/error tag for a row (if applicable)
      */
     renderItemNoCautionTag(row) {
       if (!row.itemNoWarning) return '';
 
+      const isError = row.itemNoSeverity === 'ERROR';
       const reasonText = this.formatItemNoReason(row.itemNoReason, row.itemNoValue);
-      return `<div class="nanopro-caution-tag">⚠️ Item_No: ${reasonText}</div>`;
+      return `<div class="nanopro-caution-tag ${isError ? 'nanopro-tag-error' : ''}">${isError ? '❌' : '⚠️'} Item_No: ${reasonText}</div>`;
     }
 
     /**
-     * Format human-readable reason for Item_No caution
+     * Format human-readable reason for Item_No caution/error
      */
     formatItemNoReason(reason, value) {
       switch (reason) {
         case 'COLUMN_NOT_FOUND': return 'Not found';
         case 'BLANK': return 'Blank';
         case 'DASH_R': return `"${value?.trim() || '-R'}" detected`;
+        case 'ONLY_DASH_R': return 'Cannot be only "-R"';
+        case 'MISSING_DASH_R': return 'Missing "-R" suffix (Rental)';
+        case 'UNEXPECTED_DASH_R': return 'Unexpected "-R" suffix (Non-Rental)';
         default: return reason || 'Unknown';
       }
+    }
+
+    /**
+     * Render sidebar validations section (Environment, Trade Partner, is_rental, Page Info)
+     */
+    renderSidebarValidation(sidebar) {
+      if (!sidebar) return '';
+
+      const env = sidebar.environment;
+      const rental = sidebar.isRental;
+      const partner = sidebar.tradePartner;
+      const page = sidebar.pageInfo;
+
+      const envPass = env && env.status === 'VALID';
+      const rentalPass = rental && rental.status === 'VALID';
+      const partnerPass = partner && partner.status === 'VALID';
+
+      return `
+        <div class="nanopro-sidebar-section">
+          <div class="nanopro-sidebar-header">
+            <span class="nanopro-sidebar-title">📋 Sidebar Fields</span>
+            ${sidebar.isValid ? 
+              '<span class="nanopro-pill nanopro-pill-valid">Passed</span>' : 
+              '<span class="nanopro-pill nanopro-pill-error">Issues</span>'}
+          </div>
+          <div class="nanopro-sidebar-grid">
+            <div class="nanopro-sidebar-card ${envPass ? 'card-valid' : 'card-error'}">
+              <div class="nanopro-card-title">
+                <span class="nanopro-card-icon">${envPass ? '✓' : '✗'}</span>
+                <span>Environment</span>
+              </div>
+              <div class="nanopro-card-desc" title="${env?.value || ''}">
+                ${envPass ? 'prod' : (env?.message || 'Missing')}
+              </div>
+            </div>
+
+            <div class="nanopro-sidebar-card ${partnerPass ? 'card-valid' : 'card-error'}">
+              <div class="nanopro-card-title">
+                <span class="nanopro-card-icon">${partnerPass ? '✓' : '✗'}</span>
+                <span>Trade Partner</span>
+              </div>
+              <div class="nanopro-card-desc" title="${partner?.value || ''}">
+                ${partnerPass ? (partner.value || 'Present') : (partner?.message || 'Missing')}
+              </div>
+            </div>
+
+            <div class="nanopro-sidebar-card ${rentalPass ? 'card-valid' : 'card-error'}">
+              <div class="nanopro-card-title">
+                <span class="nanopro-card-icon">${rentalPass ? '✓' : '✗'}</span>
+                <span>is_rental</span>
+              </div>
+              <div class="nanopro-card-desc" title="${rental?.values ? rental.values.join(', ') : ''}">
+                ${rental?.message || (rentalPass ? 'Consistent' : 'Error')}
+              </div>
+            </div>
+
+            ${page ? `
+            <div class="nanopro-sidebar-card card-info">
+              <div class="nanopro-card-title">
+                <span class="nanopro-card-icon">📄</span>
+                <span>Page Info</span>
+              </div>
+              <div class="nanopro-card-desc">
+                ${page.totalPages ? `Page ${page.currentPage} of ${page.totalPages}` : `Page ${page.currentPage}`}
+              </div>
+            </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
     }
 
     /**
@@ -291,6 +381,21 @@ const NanoProPanel = (function () {
               <span class="nanopro-total-sum">Sum: ${sumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
               <span class="nanopro-total-note">invoice_amount not found in sidebar</span>
+            </div>
+          </div>
+        `;
+      }
+
+      if (total.status === 'MULTIPLE_INSTANCES') {
+        return `
+          <div class="nanopro-total nanopro-total-mismatch">
+            <div class="nanopro-total-label">❌ Multiple Invoice Totals</div>
+            <div class="nanopro-total-values">
+              <span class="nanopro-total-sum">Sum: ${sumFormatted}</span>
+              <span class="nanopro-total-sep">|</span>
+              <span class="nanopro-total-note" style="color: #dc2626; font-weight: 600;">
+                ${total.message}
+              </span>
             </div>
           </div>
         `;

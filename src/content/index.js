@@ -244,10 +244,22 @@
             }
 
             // --- State Hashing for Performance ---
-            // Create a simple string representation of the parsed table + invoice amount sidebar to check if DOM changed
-            const invoiceAmountEl = NanoProAutoDetector.findInvoiceAmount();
-            const sidebarTotalStr = invoiceAmountEl ? invoiceAmountEl.raw : 'none';
-            const currentStateHash = JSON.stringify(detectResult.rows) + '|' + sidebarTotalStr;
+            // Create a simple string representation of the parsed table + sidebar fields to check if DOM changed
+            const sidebarFields = NanoProAutoDetector.findSidebarFields ? 
+                NanoProAutoDetector.findSidebarFields() : 
+                { invoiceAmount: NanoProAutoDetector.findInvoiceAmount() };
+
+            const isRentalHash = (sidebarFields.isRental || []).map(r => r.raw).join(',');
+            const sidebarHash = [
+                sidebarFields.invoiceAmount?.raw || 'no-inv',
+                sidebarFields.invoiceAmount?.multiple ? 'multi-inv' : '',
+                sidebarFields.environment?.raw || 'no-env',
+                isRentalHash,
+                sidebarFields.tradePartnerName?.raw || 'no-tp',
+                sidebarFields.pageInfo?.raw || 'no-page'
+            ].join('|');
+
+            const currentStateHash = JSON.stringify(detectResult.rows) + '|' + sidebarHash;
 
             if (currentStateHash === lastDetectedStateHash) {
                 // The inputs on the screen haven't changed since last validation, silently discard to save cycles
@@ -263,7 +275,7 @@
             lastDetectedStateHash = currentStateHash;
 
             // We have extracted rows — validate them
-            processAutoDetectedRows(detectResult.rows, detectResult.columnMapping);
+            processAutoDetectedRows(detectResult.rows, detectResult.columnMapping, sidebarFields);
 
         } catch (error) {
             console.error('[NanoPro v2] Auto-detection error:', error);
@@ -274,8 +286,12 @@
     /**
      * Process auto-detected rows through validation pipeline
      */
-    function processAutoDetectedRows(rows, columnMapping) {
+    function processAutoDetectedRows(rows, columnMapping, sidebarFields = null) {
         console.log(`[NanoPro v2] Validating ${rows.length} auto-detected rows`);
+
+        const fields = sidebarFields || (NanoProAutoDetector.findSidebarFields ? 
+            NanoProAutoDetector.findSidebarFields() : 
+            { invoiceAmount: NanoProAutoDetector.findInvoiceAmount() });
 
         // Convert raw string values to the {value, confidence} format the validator expects
         // NanoProParser.parse() returns { value: number, confidence: 0-1, original: string }
@@ -303,8 +319,9 @@
         }
 
         // Attach supplementary validations
-        attachTotalValidation(validationResult);
-        attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn);
+        attachTotalValidation(validationResult, fields.invoiceAmount);
+        const sidebarResult = attachSidebarValidation(validationResult, fields);
+        attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn, sidebarResult?.rentalStatus);
 
         // Update UI
         updateUI(validationResult);
@@ -320,7 +337,7 @@
      * Attach total validation: sum of amounts vs invoice_amount from sidebar
      * Enriches validationResult.totalValidation — never mutates existing data
      */
-    function attachTotalValidation(result) {
+    function attachTotalValidation(result, invoiceAmountInput = null) {
         if (!result || !result.success || !result.results) return;
 
         try {
@@ -341,7 +358,7 @@
             totalAmount = NanoProParser.round(totalAmount, 2);
 
             // Find invoice_amount from sidebar
-            const invoiceAmount = NanoProAutoDetector.findInvoiceAmount();
+            const invoiceAmount = invoiceAmountInput || NanoProAutoDetector.findInvoiceAmount();
 
             if (!invoiceAmount) {
                 result.totalValidation = {
@@ -352,6 +369,19 @@
                     message: 'invoice_amount not found in sidebar'
                 };
                 console.log(`[NanoPro] Total: Sum=${totalAmount} | Invoice Amount: not found`);
+                return;
+            }
+
+            if (invoiceAmount.multiple) {
+                result.totalValidation = {
+                    sumAmount: totalAmount,
+                    summedRows: summedRows,
+                    invoiceAmount: invoiceAmount.value,
+                    invoiceAmountRaw: invoiceAmount.raw,
+                    status: 'MULTIPLE_INSTANCES',
+                    message: `Multiple invoice_amount instances found (${invoiceAmount.count})`
+                };
+                console.warn(`[NanoPro] Total: Multiple invoice_amount instances (${invoiceAmount.count})`);
                 return;
             }
 
@@ -379,74 +409,246 @@
     }
 
     /**
-     * Attach Item_No validation: flag rows where Item_No is "-R", blank, or missing
-     * Enriches validationResult.itemNoWarnings — never mutates existing row data
+     * Attach Sidebar Validations:
+     * 1. Environment === 'prod' (case-insensitive)
+     * 2. is_rental: all instances must be identical (all True or all False)
+     * 3. trade_partner_name: must be present and not null or blank
+     * 4. invoice_amount: must not have multiple instances
      */
-    function attachItemNoValidation(result, rawItemNos, hasItemNoColumn = true) {
+    function attachSidebarValidation(result, sidebarFields) {
+        if (!result || !result.success) return { rentalStatus: null };
+
+        try {
+            const env = sidebarFields?.environment !== undefined ? 
+                sidebarFields.environment : NanoProAutoDetector.findEnvironment();
+            const rentalInstances = sidebarFields?.isRental !== undefined ? 
+                sidebarFields.isRental : NanoProAutoDetector.findIsRental();
+            const tradePartner = sidebarFields?.tradePartnerName !== undefined ? 
+                sidebarFields.tradePartnerName : NanoProAutoDetector.findTradePartnerName();
+            const pageInfo = sidebarFields?.pageInfo !== undefined ? 
+                sidebarFields.pageInfo : NanoProAutoDetector.detectPageInfo();
+            const invoiceAmount = sidebarFields?.invoiceAmount !== undefined ? 
+                sidebarFields.invoiceAmount : NanoProAutoDetector.findInvoiceAmount();
+
+            const errors = [];
+            const warnings = [];
+
+            // 1. Environment check: must be present and equal to "prod" (case-insensitive)
+            let envStatus = 'VALID';
+            let envMessage = '';
+            if (!env || !env.raw || env.raw.trim() === '') {
+                envStatus = 'ERROR';
+                envMessage = 'Environment not found in sidebar';
+                errors.push({ field: 'Environment', message: envMessage });
+            } else if (env.raw.trim().toLowerCase() !== 'prod') {
+                envStatus = 'ERROR';
+                envMessage = `Environment is "${env.raw.trim()}", expected "prod"`;
+                errors.push({ field: 'Environment', message: envMessage });
+            } else {
+                envMessage = 'prod';
+            }
+
+            // 2. is_rental check: must be present and all values must be identical (all True or all False)
+            let rentalStatus = {
+                status: 'VALID',
+                allTrue: false,
+                allFalse: false,
+                isConsistent: false,
+                values: [],
+                message: ''
+            };
+
+            if (!rentalInstances || rentalInstances.length === 0) {
+                rentalStatus.status = 'ERROR';
+                rentalStatus.message = 'is_rental not found in sidebar';
+                errors.push({ field: 'is_rental', message: rentalStatus.message });
+            } else {
+                const normalizedValues = rentalInstances.map(r => (r.raw || '').trim().toLowerCase());
+                rentalStatus.values = rentalInstances.map(r => (r.raw || '').trim());
+
+                const firstVal = normalizedValues[0];
+                const allSame = normalizedValues.every(v => v === firstVal);
+
+                if (!allSame) {
+                    rentalStatus.status = 'ERROR';
+                    rentalStatus.isConsistent = false;
+                    rentalStatus.message = `Inconsistent is_rental values: [${rentalStatus.values.join(', ')}]`;
+                    errors.push({ field: 'is_rental', message: rentalStatus.message });
+                } else {
+                    rentalStatus.isConsistent = true;
+                    if (firstVal === 'true') {
+                        rentalStatus.allTrue = true;
+                        rentalStatus.message = 'All True (Rental)';
+                    } else if (firstVal === 'false') {
+                        rentalStatus.allFalse = true;
+                        rentalStatus.message = 'All False (Non-Rental)';
+                    } else {
+                        rentalStatus.status = 'ERROR';
+                        rentalStatus.message = `Invalid is_rental value: "${rentalStatus.values[0]}"`;
+                        errors.push({ field: 'is_rental', message: rentalStatus.message });
+                    }
+                }
+            }
+
+            // 3. trade_partner_name check: must be present and not null/blank
+            let tradePartnerStatus = 'VALID';
+            let tradePartnerMessage = '';
+            if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
+                tradePartnerStatus = 'ERROR';
+                tradePartnerMessage = 'trade_partner_name not found in sidebar';
+                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+            } else if (tradePartner.raw.trim() === '') {
+                tradePartnerStatus = 'ERROR';
+                tradePartnerMessage = 'trade_partner_name is blank';
+                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+            } else {
+                tradePartnerMessage = tradePartner.raw.trim();
+            }
+
+            // 4. invoice_amount multiplicity check
+            let invoiceAmountMultiplicity = { status: 'VALID', message: '' };
+            if (invoiceAmount && invoiceAmount.multiple) {
+                invoiceAmountMultiplicity.status = 'ERROR';
+                invoiceAmountMultiplicity.message = `Multiple instances of invoice_amount detected (${invoiceAmount.count})`;
+                errors.push({ field: 'invoice_amount', message: invoiceAmountMultiplicity.message });
+            }
+
+            const sidebarValidation = {
+                isValid: errors.length === 0,
+                errors: errors,
+                warnings: warnings,
+                environment: {
+                    status: envStatus,
+                    value: env?.raw?.trim() || null,
+                    message: envMessage
+                },
+                isRental: rentalStatus,
+                tradePartner: {
+                    status: tradePartnerStatus,
+                    value: tradePartner?.raw?.trim() || null,
+                    message: tradePartnerMessage
+                },
+                invoiceAmountMultiplicity: invoiceAmountMultiplicity,
+                pageInfo: pageInfo
+            };
+
+            result.sidebarValidation = sidebarValidation;
+            console.log('[NanoPro] Sidebar validation:', sidebarValidation);
+            return { rentalStatus };
+
+        } catch (e) {
+            console.warn('[NanoPro] Sidebar validation error:', e.message);
+            result.sidebarValidation = {
+                isValid: false,
+                errors: [{ field: 'sidebar', message: e.message }],
+                warnings: []
+            };
+            return { rentalStatus: null };
+        }
+    }
+
+    /**
+     * Attach Item_No validation:
+     * - Check Item_No is not ONLY "-R" (flag as ERROR if so)
+     * - If is_rental is all True, item_no should have -R suffix (flag as CAUTION if missing)
+     * - If is_rental is all False, item_no must NOT have -R suffix (flag as ERROR if present)
+     * - Check for blank Item_No when column exists
+     */
+    function attachItemNoValidation(result, rawItemNos, hasItemNoColumn = true, rentalStatus = null) {
         if (!result || !result.success || !result.results) return;
 
         try {
             const warnings = [];
-            // Flag if it ends with -R (case insensitive, ignoring trailing spaces)
+            const errors = [];
             const ENDS_WITH_R_PATTERN = /-\s*R\s*$/i; 
-
-            // First pass: check if ANY item_no ends with -R
-            let hasAnyDashR = false;
-            for (let i = 0; i < result.results.length; i++) {
-                const itemNo = rawItemNos[i] !== undefined ? rawItemNos[i] : null;
-                if (typeof itemNo === 'string' && ENDS_WITH_R_PATTERN.test(itemNo)) {
-                    hasAnyDashR = true;
-                    break;
-                }
-            }
+            const ONLY_R_PATTERN = /^-\s*R\s*$/i;
 
             for (let i = 0; i < result.results.length; i++) {
                 const itemNo = rawItemNos[i] !== undefined ? rawItemNos[i] : null;
                 const rowNumber = result.results[i].rowNumber || (i + 1);
                 let reason = null;
+                let severity = 'CAUTION'; // 'CAUTION' or 'ERROR'
 
                 if (itemNo === null || itemNo === undefined) {
                     // Only flag as BLANK if the column actually exists in the table headers
                     if (hasItemNoColumn) {
                         reason = 'BLANK';
+                        severity = 'CAUTION';
                     }
                 } else if (typeof itemNo === 'string' && itemNo.trim() === '') {
                     reason = 'BLANK';
-                } else if (hasAnyDashR && !ENDS_WITH_R_PATTERN.test(itemNo)) {
-                    // Rule: If any item ends with -R, ALL items must end with -R
-                    reason = 'MISSING_DASH_R';
+                    severity = 'CAUTION';
+                } else if (typeof itemNo === 'string') {
+                    const trimmed = itemNo.trim();
+                    const hasDashRSuffix = ENDS_WITH_R_PATTERN.test(trimmed);
+                    const isOnlyDashR = ONLY_R_PATTERN.test(trimmed);
+
+                    // Rule 3: Must NOT be ONLY -R
+                    if (isOnlyDashR) {
+                        reason = 'ONLY_DASH_R';
+                        severity = 'ERROR';
+                    } else if (rentalStatus && rentalStatus.isConsistent) {
+                        // Rule 4: If is_rental is all True only then there should be -R in item_no
+                        if (rentalStatus.allTrue) {
+                            if (!hasDashRSuffix) {
+                                reason = 'MISSING_DASH_R';
+                                severity = 'CAUTION'; // As requested by user: flag as caution
+                            }
+                        } else if (rentalStatus.allFalse) {
+                            if (hasDashRSuffix) {
+                                reason = 'UNEXPECTED_DASH_R';
+                                severity = 'ERROR';
+                            }
+                        }
+                    } else if (rentalStatus && rentalStatus.status === 'ERROR') {
+                        // If is_rental had error/inconsistent, flag unexpected -R as error
+                        if (hasDashRSuffix) {
+                            reason = 'UNEXPECTED_DASH_R';
+                            severity = 'ERROR';
+                        }
+                    }
                 }
 
                 if (reason) {
-                    warnings.push({
+                    const item = {
                         rowIndex: i,
                         rowNumber: rowNumber,
                         value: itemNo,
-                        reason: reason
-                    });
+                        reason: reason,
+                        severity: severity
+                    };
+                    warnings.push(item);
+                    if (severity === 'ERROR') {
+                        errors.push(item);
+                    }
+
                     // Annotate the row result
                     result.results[i].itemNoWarning = true;
                     result.results[i].itemNoValue = itemNo;
                     result.results[i].itemNoReason = reason;
+                    result.results[i].itemNoSeverity = severity;
                 } else {
                     result.results[i].itemNoWarning = false;
                     result.results[i].itemNoValue = itemNo;
                     result.results[i].itemNoReason = null;
+                    result.results[i].itemNoSeverity = null;
                 }
             }
 
             result.itemNoWarnings = warnings;
+            result.itemNoErrors = errors;
 
             if (warnings.length > 0) {
-                console.log(`[NanoPro] Item_No: ${warnings.length} caution(s) found:`,
-                    warnings.map(w => `Row ${w.rowNumber}: ${w.reason} ("${w.value}")`));
+                console.log(`[NanoPro] Item_No: ${warnings.length} issue(s) found:`,
+                    warnings.map(w => `Row ${w.rowNumber}: [${w.severity}] ${w.reason} ("${w.value}")`));
             } else {
-                console.log('[NanoPro] Item_No: All rows OK (-R consistency matched)');
+                console.log('[NanoPro] Item_No: All rows OK');
             }
 
         } catch (e) {
             console.warn('[NanoPro] Item_No validation error:', e.message);
             result.itemNoWarnings = [];
+            result.itemNoErrors = [];
         }
     }
 
@@ -696,43 +898,61 @@
      */
     function updateUI(result) {
         const { summary } = result;
-        const hasItemNoWarnings = result.itemNoWarnings && result.itemNoWarnings.length > 0;
+        const sidebarErrors = result.sidebarValidation?.errors || [];
+        const itemNoErrors = result.itemNoErrors || [];
+        const itemNoWarnings = (result.itemNoWarnings || []).filter(w => w.severity !== 'ERROR');
+
         const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
         const hasTotalNotFound = result.totalValidation && result.totalValidation.status === 'NOT_FOUND';
-        const isCaution = hasItemNoWarnings || hasTotalMismatch || hasTotalNotFound;
+        const hasTotalMultiple = result.totalValidation && result.totalValidation.status === 'MULTIPLE_INSTANCES';
+
+        // Errors: calculation mismatches, sidebar failures, item_no critical errors, multiple totals
+        const totalErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + (hasTotalMultiple ? 1 : 0);
+
+        // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing
+        const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound;
 
         const badgeEl = NanoProOverlay.getShadow()?.querySelector('.nanopro-badge');
 
-        if (isCaution && badgeEl) {
-            badgeEl.classList.add('has-caution');
-        } else if (badgeEl) {
-            badgeEl.classList.remove('has-caution');
-        }
-
         // Trigger shake animation if there are errors or cautions
-        if ((summary.invalid > 0 || isCaution) && badgeEl) {
+        if ((totalErrorCount > 0 || isCaution) && badgeEl) {
             badgeEl.classList.remove('shake');
             void badgeEl.offsetWidth; // Trigger reflow to restart CSS animation
             badgeEl.classList.add('shake');
         }
 
-        if (summary.invalid > 0) {
-            NanoProBadge.setInvalid(summary.invalid, summary.total);
-        } else if (summary.incomplete > 0) {
+        if (totalErrorCount > 0) {
+            if (badgeEl) badgeEl.classList.remove('has-caution');
+            NanoProBadge.setInvalid(totalErrorCount, summary?.total || 0);
+
+            const textEl = badgeEl?.querySelector('.nanopro-badge-text');
+            if (textEl) {
+                const errorReasons = [];
+                if (summary?.invalid > 0) errorReasons.push(`${summary.invalid} Calc Error${summary.invalid > 1 ? 's' : ''}`);
+                if (sidebarErrors.length > 0) errorReasons.push(`${sidebarErrors[0].field} Error`);
+                if (itemNoErrors.length > 0) errorReasons.push(`Item_No Error`);
+                if (hasTotalMultiple) errorReasons.push(`Multiple Totals`);
+                textEl.textContent = `❌ ` + errorReasons.join(' | ');
+            }
+        } else if (summary?.incomplete > 0) {
+            if (badgeEl) badgeEl.classList.remove('has-caution');
             NanoProBadge.setIncomplete();
         } else if (isCaution) {
+            if (badgeEl) badgeEl.classList.add('has-caution');
             NanoProBadge.setIncomplete();
+
             let cautionMessages = [];
             if (hasTotalMismatch) cautionMessages.push('Total Mismatch');
             if (hasTotalNotFound) cautionMessages.push('Missing Total');
-            if (hasItemNoWarnings) cautionMessages.push(`${result.itemNoWarnings.length} Item Warnings`);
+            if (itemNoWarnings.length > 0) cautionMessages.push(`${itemNoWarnings.length} Item Caution${itemNoWarnings.length > 1 ? 's' : ''}`);
 
             const textEl = badgeEl?.querySelector('.nanopro-badge-text');
             if (textEl) {
                 textEl.textContent = `⚠️ ` + cautionMessages.join(' | ');
             }
         } else {
-            NanoProBadge.setValid(summary.total);
+            if (badgeEl) badgeEl.classList.remove('has-caution');
+            NanoProBadge.setValid(summary?.total || 0);
         }
 
         NanoProPanel.render(result);

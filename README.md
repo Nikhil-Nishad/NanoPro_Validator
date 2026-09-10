@@ -1,6 +1,6 @@
 # 🧮 NanoPro Validator
 
-> Chrome/Edge extension that validates invoice line item calculations on Nanonets review pages.
+> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, and rental consistency on Nanonets review pages.
 
 ![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
@@ -9,14 +9,22 @@
 ---
 
 ## 🆕 What's New in 3.0.0
-- **High-Performance SPA Route Detection**: Extension now strictly scopes execution to single-file document paths. A lightweight 500ms hash tracker handles seamless React SPA transitions without hard refreshes.
-- **Item_No Consistency Validation**: If ANY line item's `Item_No` ends with `-R`, the extension enforces that ALL other items must also end with `-R`. Rows violating this consistency are flagged.
-- **Bug Fix**: Line amount is now correctly detected in tables with only 1 row (resolved wide-column alignment issue).
-- **Draggable UI**: Hold `Ctrl` and drag anywhere on the overlay to reposition it.
-- **Resizable Panel**: Drag the bottom-right corner of the summary panel to resize.
-- **Item_No Validation**: Adds a ⚠️ caution tag when `Item_No` is `-R`, blank, or missing.
-- **Overlay Caution Indicator**: Badge overlay turns yellow and shows a blinking red dot on sum mismatch or Item_No caution.
-- **Smart Auto-Recalculation**: Auto mode now pairs DOM mutation observers with a non-intrusive background polling engine that instantly drops cycles if table inputs haven't fundamentally changed, eliminating UI lag.
+- **Sidebar Field Validations**:
+  - **`Environment` Check**: Verifies that `Environment` is present in the sidebar and equals `"prod"` (case-insensitive: `prod`, `PROD`, etc.). Non-prod or missing environments are flagged as errors.
+  - **`is_rental` Multi-Value Consistency**: When multiple `is_rental` entries appear in the sidebar, checks that all values are identical (either all `True` or all `False`). Mixed values or missing fields are flagged as errors.
+  - **`trade_partner_name` Presence**: Verifies that `trade_partner_name` is present in the sidebar and is not blank or null.
+  - **Single `invoice_amount` Verification**: Enforces that only a single instance/number for `invoice_amount` exists in the sidebar. Multiple instances are flagged as errors.
+- **`Item_No` Cross-Validation & Suffix Rules**:
+  - **Not Only `-R`**: An `Item_No` cannot be just `"-R"` or `"-r"` (flagged as ❌ error). It can only contain `-R` as a suffix following content (e.g. `SKU123-R`).
+  - **Rental Cross-Validation**:
+    - When `is_rental` is **all True**: line items should have the `-R` suffix. Missing suffixes are flagged with ⚠️ caution.
+    - When `is_rental` is **all False**: line items must **NOT** have `-R` suffix. Unexpected suffixes are flagged as ❌ errors.
+- **Document Page Number Detection**:
+  - Full-fledged detection of current page and total pages (e.g., `Page 1 of 4`) by reading Nanonets pagination controls (`Page` span, page input, and `of X` indicator).
+  - Displayed live in the Sidebar Fields section of the validation panel.
+- **High-Performance SPA Route Detection**: Strictly scopes execution to single-file document paths with seamless 500ms hash tracking across React SPA transitions.
+- **Dedicated Sidebar Fields Panel UI**: Clean, modern card grid in the details panel showing real-time validation statuses for Environment, Trade Partner, is_rental, and Page Info.
+- **Smart Auto-Recalculation**: Live re-validation hashes both table rows and all sidebar field states to instantly drop redundant cycles while instantly catching edits.
 
 ---
 
@@ -24,8 +32,10 @@
 
 - **Dual Mode** — Automatic detection or manual table selection
 - **Auto Detection** — Column-first DOM analysis finds Qty, Price, Amount automatically
-- **Invoice Total Validation** — Compares sum of line amounts against sidebar `invoice_amount`
-- **Item_No Consistency Validation** — Enforces `-R` suffix consistency across all line items and flags missing or blank entries with ⚠️ caution
+- **Sidebar Field Validation** — Validates `Environment` (`prod`), `is_rental` consistency, and non-blank `trade_partner_name`
+- **Invoice Total Validation** — Compares sum of line amounts against sidebar `invoice_amount` (detects multiple totals)
+- **Item_No Cross-Validation** — Enforces `-R` suffix consistency linked to `is_rental` status and forbids standalone `-R`
+- **Document Page Detection** — Identifies current page and total document pages
 - **Visual Table Selection** — Snipping-tool-like interface for manual mode
 - **Draggable UI** — Hold `Ctrl` and drag to reposition the extension overlay
 - **Resizable Panel** — Drag the bottom-right corner to adjust the details panel
@@ -34,7 +44,7 @@
 - **Intelligent Suggestions** — Correction recommendations with confidence scores
 - **Non-Intrusive** — Operates entirely through content script DOM reads (invisible to the page)
 - **Keyboard Shortcuts** — Quick access without mouse
-- **High-Performance Route Tracking** — Strictly limits bounds to single file document paths, automatically cleaning up and resetting state upon SPA hash navigation.
+- **High-Performance Route Tracking** — Strictly limits bounds to single file document paths, automatically cleaning up and resetting state upon SPA hash navigation
 
 ---
 
@@ -56,8 +66,8 @@
 ### Auto Mode (Default after first toggle)
 1. Look for the badge at the top of the page
 2. Click **Auto/Manual** toggle to switch to Auto mode
-3. Extension automatically detects the table and validates all rows
-4. Invoice total is compared against sidebar `invoice_amount`
+3. Extension automatically detects the table and sidebar fields
+4. Invoice total, environment, rental status, trade partner, and item numbers are validated automatically
 
 ### Manual Mode
 1. Click the badge or press `Alt+Shift+S`
@@ -80,21 +90,20 @@
 
 ### Badge States
 
-| Badge | Color | Meaning |
-|-------|-------|---------|
-| 📐 Click to Select | Purple | Ready to scan (manual mode) |
-| ✂️ Select Table Area | Cyan | Selection mode active |
-| 🔄 Validating... | Blue | Processing |
-| ✅ X/X Valid | Green | All calculations correct |
-| ❌ X Errors Found | Red | Some calculations incorrect |
-| ⚠️ Incomplete Data | Orange | Missing values in some rows |
-| ⚠️ Item_No Caution | Orange | Item_No is missing `-R` suffix, blank, or missing entirely |
+| Badge | Meaning |
+|-------|---------|
+| 📐 Click to Select | Ready to scan (manual mode) |
+| ✂️ Select Table Area | Selection mode active |
+| 🔄 Validating... | Processing |
+| ✅ X/X Valid | All calculations and sidebar fields passed |
+| ❌ Errors Found | Calculations, sidebar fields, or Item_No errors found |
+| ⚠️ Cautions Found | Total mismatch/missing or Item_No missing `-R` |
 
 ### Panel Display
-- **Summary Bar**: Count of valid/invalid rows
-- **Each Row**: `Qty × Price = Amount` with status icon
-- **Item_No Caution**: ⚠️ tag on rows missing `-R` (when another row has it), or if the cell is completely blank
-- **Invoice Total**: Sum of line amounts vs `invoice_amount` (✅ Match / ❌ Mismatch)
+- **Summary Bar**: Valid/invalid row count
+- **Sidebar Fields Section**: Status cards for Environment (`prod`), Trade Partner, is_rental, and Page Info
+- **Each Row**: `Qty × Price = Amount` with status icon and caution/error tags
+- **Invoice Total**: Sum of line amounts vs `invoice_amount` (✅ Match / ❌ Mismatch / ❌ Multiple Totals)
 
 ---
 

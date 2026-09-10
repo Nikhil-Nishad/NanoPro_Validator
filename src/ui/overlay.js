@@ -564,6 +564,12 @@ const NanoProOverlay = (function () {
       margin-top: 6px;
     }
 
+    .nanopro-tag-error {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #dc2626;
+    }
+
     .nanopro-caution-summary {
       display: flex;
       align-items: center;
@@ -576,6 +582,108 @@ const NanoProOverlay = (function () {
       font-size: 13px;
       font-weight: 600;
       margin-bottom: 12px;
+    }
+
+    .nanopro-error-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #dc2626;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    /* Sidebar validations styling */
+    .nanopro-sidebar-section {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+    }
+
+    .nanopro-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .nanopro-sidebar-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .nanopro-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 8px;
+      border-radius: 10px;
+    }
+
+    .nanopro-pill-valid {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .nanopro-pill-error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .nanopro-sidebar-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 6px;
+    }
+
+    .nanopro-sidebar-card {
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid transparent;
+    }
+
+    .nanopro-sidebar-card.card-valid {
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+
+    .nanopro-sidebar-card.card-error {
+      background: #fef2f2;
+      border-color: #fecaca;
+    }
+
+    .nanopro-sidebar-card.card-info {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+    }
+
+    .nanopro-card-title {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    .nanopro-card-icon {
+      font-size: 12px;
+    }
+
+    .nanopro-card-desc {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     /* Large calculation display */

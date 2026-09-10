@@ -457,55 +457,127 @@ const NanoProAutoDetector = (function () {
     }
 
     // ═══════════════════════════════════════════════════════
-    // INVOICE AMOUNT EXTRACTION (sidebar field, read-only)
+    // ═══════════════════════════════════════════════════════
+    // SIDEBAR FIELDS EXTRACTION & VALIDATION HELPERS
     // ═══════════════════════════════════════════════════════
 
+    /**
+     * Extract text or input value from a container element
+     */
+    function extractElementValue(el) {
+        if (!el) return '';
+        const input = el.querySelector('input, textarea');
+        if (input) return (input.value || '').trim();
+        const span = el.querySelector('span');
+        if (span) return (span.textContent || '').trim();
+        return (el.textContent || '').trim();
+    }
+
+    /**
+     * Find a sidebar field row container by searching for a label span
+     */
+    function findSidebarFieldRow(labelName) {
+        const target = labelName.toLowerCase().replace(/[\s_-]+/g, '');
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+            const text = (span.textContent || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+            if (text === target) {
+                const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
+                if (row) return row;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find invoice_amount from sidebar and check for multiple instances
+     */
     function findInvoiceAmount() {
         console.log('[NanoPro AutoDetector] Looking for invoice_amount in sidebar...');
 
-        // S1: data-testid (most reliable)
-        const testIdEl = document.querySelector('[data-testid="label_box_div_invoice_amount"]');
-        if (testIdEl) {
-            const span = testIdEl.querySelector('span');
-            if (span && span.textContent.trim()) {
-                const parsed = NanoProParser.parse(span.textContent.trim());
-                if (parsed && parsed.value !== null) {
-                    console.log(`[NanoPro AutoDetector] invoice_amount found via data-testid: ${parsed.value}`);
-                    return { value: parsed.value, confidence: parsed.confidence, raw: span.textContent.trim(), selector: 'data-testid' };
+        const testIdEls = document.querySelectorAll('[data-testid="label_box_div_invoice_amount"], [data-testid*="label_box_div_invoice_amount" i]');
+        const foundInstances = [];
+
+        if (testIdEls.length > 0) {
+            for (const el of testIdEls) {
+                const valStr = extractElementValue(el);
+                if (valStr) {
+                    const parsed = NanoProParser.parse(valStr);
+                    if (parsed && parsed.value !== null) {
+                        foundInstances.push({
+                            value: parsed.value,
+                            confidence: parsed.confidence,
+                            raw: valStr,
+                            selector: 'data-testid'
+                        });
+                    }
                 }
+            }
+
+            if (foundInstances.length > 1) {
+                console.warn(`[NanoPro AutoDetector] MULTIPLE invoice_amount instances found (${foundInstances.length})`);
+                return {
+                    value: foundInstances[0].value,
+                    count: foundInstances.length,
+                    multiple: true,
+                    instances: foundInstances,
+                    raw: foundInstances.map(i => i.raw).join(', '),
+                    selector: 'data-testid'
+                };
+            } else if (foundInstances.length === 1) {
+                const single = foundInstances[0];
+                console.log(`[NanoPro AutoDetector] invoice_amount found via data-testid: ${single.value}`);
+                return {
+                    value: single.value,
+                    confidence: single.confidence,
+                    count: 1,
+                    multiple: false,
+                    raw: single.raw,
+                    selector: 'data-testid'
+                };
             }
         }
 
         // S2: Label text scan — find span containing "invoice_amount", then read sibling value
+        const target = 'invoiceamount';
         const allSpans = document.querySelectorAll('span');
-        for (const span of allSpans) {
-            const text = (span.textContent || '').trim().toLowerCase();
-            if (text === 'invoice_amount' || text === 'invoice amount' || text === 'total_amount' || text === 'total amount') {
-                // Walk up to the row container and find the value span
-                const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
-                if (row) {
-                    const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
-                    if (ocrDiv) {
-                        const valueSpan = ocrDiv.querySelector('span');
-                        if (valueSpan && valueSpan.textContent.trim()) {
-                            const parsed = NanoProParser.parse(valueSpan.textContent.trim());
-                            if (parsed && parsed.value !== null) {
-                                console.log(`[NanoPro AutoDetector] invoice_amount found via label scan: ${parsed.value}`);
-                                return { value: parsed.value, confidence: parsed.confidence, raw: valueSpan.textContent.trim(), selector: 'label-scan' };
-                            }
-                        }
-                    }
+        const seenRows = new Set();
 
-                    // Fallback: find any numeric span in the row that isn't the label
-                    const spans = row.querySelectorAll('span');
-                    for (const s of spans) {
-                        if (s === span) continue;
-                        const val = (s.textContent || '').trim();
-                        if (val && NanoProParser.NUMERIC_PATTERNS.anyNumeric.test(val.replace(/[$€£¥₹,]/g, ''))) {
-                            const parsed = NanoProParser.parse(val);
-                            if (parsed && parsed.value !== null) {
-                                console.log(`[NanoPro AutoDetector] invoice_amount found via numeric sibling: ${parsed.value}`);
-                                return { value: parsed.value, confidence: parsed.confidence * 0.9, raw: val, selector: 'sibling-numeric' };
+        for (const span of allSpans) {
+            const text = (span.textContent || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+            if (text === target || text === 'totalamount') {
+                const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
+                if (row && !seenRows.has(row)) {
+                    seenRows.add(row);
+                    const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
+                    const valStr = extractElementValue(ocrDiv);
+                    if (valStr) {
+                        const parsed = NanoProParser.parse(valStr);
+                        if (parsed && parsed.value !== null) {
+                            foundInstances.push({
+                                value: parsed.value,
+                                confidence: parsed.confidence,
+                                raw: valStr,
+                                selector: 'label-scan'
+                            });
+                        }
+                    } else {
+                        // Fallback: numeric sibling
+                        const spans = row.querySelectorAll('span');
+                        for (const s of spans) {
+                            if (s === span) continue;
+                            const val = (s.textContent || '').trim();
+                            if (val && NanoProParser.NUMERIC_PATTERNS.anyNumeric.test(val.replace(/[$€£¥₹,]/g, ''))) {
+                                const parsed = NanoProParser.parse(val);
+                                if (parsed && parsed.value !== null) {
+                                    foundInstances.push({
+                                        value: parsed.value,
+                                        confidence: parsed.confidence * 0.9,
+                                        raw: val,
+                                        selector: 'sibling-numeric'
+                                    });
+                                    break;
+                                }
                             }
                         }
                     }
@@ -513,8 +585,252 @@ const NanoProAutoDetector = (function () {
             }
         }
 
+        if (foundInstances.length > 1) {
+            console.warn(`[NanoPro AutoDetector] MULTIPLE invoice_amount instances found via scan (${foundInstances.length})`);
+            return {
+                value: foundInstances[0].value,
+                count: foundInstances.length,
+                multiple: true,
+                instances: foundInstances,
+                raw: foundInstances.map(i => i.raw).join(', '),
+                selector: 'label-scan'
+            };
+        } else if (foundInstances.length === 1) {
+            const single = foundInstances[0];
+            console.log(`[NanoPro AutoDetector] invoice_amount found via label scan: ${single.value}`);
+            return {
+                value: single.value,
+                confidence: single.confidence,
+                count: 1,
+                multiple: false,
+                raw: single.raw,
+                selector: 'label-scan'
+            };
+        }
+
         console.log('[NanoPro AutoDetector] invoice_amount not found in sidebar');
         return null;
+    }
+
+    /**
+     * Find Environment field from sidebar (must be 'prod')
+     */
+    function findEnvironment() {
+        console.log('[NanoPro AutoDetector] Looking for Environment in sidebar...');
+        const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_Environment" i], [data-testid*="label_box_div_environment" i]');
+        for (const el of testIdEls) {
+            const val = extractElementValue(el);
+            if (val) {
+                console.log(`[NanoPro AutoDetector] Environment found via data-testid: "${val}"`);
+                return { value: val, raw: val, selector: 'data-testid' };
+            }
+        }
+
+        const row = findSidebarFieldRow('Environment');
+        if (row) {
+            const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
+            const val = extractElementValue(ocrDiv || row);
+            if (val) {
+                console.log(`[NanoPro AutoDetector] Environment found via label scan: "${val}"`);
+                return { value: val, raw: val, selector: 'label-scan' };
+            }
+        }
+
+        console.log('[NanoPro AutoDetector] Environment not found in sidebar');
+        return null;
+    }
+
+    /**
+     * Find all is_rental fields from sidebar (can have multiple instances)
+     */
+    function findIsRental() {
+        console.log('[NanoPro AutoDetector] Looking for is_rental in sidebar...');
+        const results = [];
+        const seenRows = new Set();
+
+        // S1: all data-testid matching is_rental
+        const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_is_rental" i]');
+        for (const el of testIdEls) {
+            const row = el.closest('[data-index]') || el.closest('.absolute') || el;
+            if (row && seenRows.has(row)) continue;
+            if (row) seenRows.add(row);
+
+            const val = extractElementValue(el);
+            if (val !== '') {
+                results.push({
+                    value: val,
+                    raw: val,
+                    selector: 'data-testid'
+                });
+            }
+        }
+
+        // S2: Label text scan if S1 found nothing
+        if (results.length === 0) {
+            const target = 'isrental';
+            const allSpans = document.querySelectorAll('span');
+            for (const span of allSpans) {
+                const text = (span.textContent || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+                if (text === target) {
+                    const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
+                    if (row && !seenRows.has(row)) {
+                        seenRows.add(row);
+                        const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
+                        const val = extractElementValue(ocrDiv || row);
+                        if (val !== '') {
+                            results.push({
+                                value: val,
+                                raw: val,
+                                selector: 'label-scan'
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        console.log(`[NanoPro AutoDetector] is_rental found ${results.length} instance(s):`, results.map(r => r.value));
+        return results;
+    }
+
+    /**
+     * Find trade_partner_name from sidebar
+     */
+    function findTradePartnerName() {
+        console.log('[NanoPro AutoDetector] Looking for trade_partner_name in sidebar...');
+        const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_trade_partner_name" i]');
+        for (const el of testIdEls) {
+            const val = extractElementValue(el);
+            if (val !== undefined && val !== null) {
+                console.log(`[NanoPro AutoDetector] trade_partner_name found via data-testid: "${val}"`);
+                return { value: val, raw: val, selector: 'data-testid' };
+            }
+        }
+
+        const row = findSidebarFieldRow('trade_partner_name') || findSidebarFieldRow('trade partner name');
+        if (row) {
+            const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
+            const val = extractElementValue(ocrDiv || row);
+            if (val !== undefined && val !== null) {
+                console.log(`[NanoPro AutoDetector] trade_partner_name found via label scan: "${val}"`);
+                return { value: val, raw: val, selector: 'label-scan' };
+            }
+        }
+
+        console.log('[NanoPro AutoDetector] trade_partner_name not found in sidebar');
+        return null;
+    }
+
+    /**
+     * Detect document page info (current page and total pages)
+     * Identifies page numbers next to or within spans with text "Page"
+     */
+    function detectPageInfo() {
+        try {
+            // S1: Nanonets pagination control — <span>Page</span> followed by <input> and <span>of Y</span>
+            const allSpans = document.querySelectorAll('span');
+            for (const span of allSpans) {
+                const text = (span.textContent || '').trim();
+                if (/^page$/i.test(text)) {
+                    const nextEl = span.nextElementSibling;
+                    if (nextEl) {
+                        const input = nextEl.tagName === 'INPUT' ? nextEl : nextEl.querySelector('input');
+                        if (input) {
+                            const curVal = input.value || input.getAttribute('value');
+                            const maxVal = input.getAttribute('max') || input.max;
+                            // Check sibling after input for "of Y"
+                            const afterInput = nextEl.nextElementSibling;
+                            const afterText = (afterInput?.textContent || '').trim();
+                            const afterMatch = afterText.match(/(?:of|\/)\s*(\d+)/i);
+
+                            const totalPages = afterMatch ? parseInt(afterMatch[1], 10) :
+                                              (maxVal ? parseInt(maxVal, 10) : null);
+                            const currentPage = curVal ? parseInt(curVal, 10) : 1;
+
+                            const info = {
+                                currentPage: currentPage,
+                                totalPages: totalPages,
+                                raw: `Page ${currentPage}${totalPages ? ' of ' + totalPages : ''}`,
+                                source: 'nanonets-pager'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (pager): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
+                    }
+                }
+            }
+
+            // S2: General pattern matching across elements (direct text or siblings)
+            const allElements = document.querySelectorAll('span, div, p');
+            for (const el of allElements) {
+                const text = (el.textContent || '').trim();
+
+                // Direct text "Page 1 of 3", "Page 1 / 3", "Page: 1 of 3"
+                const directMatch = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                if (directMatch) {
+                    const info = {
+                        currentPage: parseInt(directMatch[1], 10),
+                        totalPages: parseInt(directMatch[2], 10),
+                        raw: text,
+                        source: 'direct-text'
+                    };
+                    console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
+                    return info;
+                }
+
+                // Span has literal text "Page" or "Page:"
+                if (/^page\s*[:#]?$/i.test(text)) {
+                    const nextEl = el.nextElementSibling;
+                    if (nextEl) {
+                        const nextText = (nextEl.textContent || '').trim();
+                        const siblingMatch = nextText.match(/^(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                        if (siblingMatch) {
+                            const info = {
+                                currentPage: parseInt(siblingMatch[1], 10),
+                                totalPages: parseInt(siblingMatch[2], 10),
+                                raw: `${text} ${nextText}`,
+                                source: 'next-sibling'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (sibling): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
+                    }
+
+                    const parent = el.parentElement;
+                    if (parent) {
+                        const parentText = (parent.textContent || '').trim();
+                        const pMatch = parentText.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i) ||
+                                      parentText.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                        if (pMatch) {
+                            const info = {
+                                currentPage: parseInt(pMatch[1], 10),
+                                totalPages: parseInt(pMatch[2], 10),
+                                raw: parentText,
+                                source: 'parent-text'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (parent): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[NanoPro AutoDetector] Error detecting page info:', e);
+        }
+        return null;
+    }
+
+    /**
+     * Unified sidebar fields aggregator
+     */
+    function findSidebarFields() {
+        return {
+            invoiceAmount: findInvoiceAmount(),
+            environment: findEnvironment(),
+            isRental: findIsRental(),
+            tradePartnerName: findTradePartnerName(),
+            pageInfo: detectPageInfo()
+        };
     }
 
     function isTableVisible() {
@@ -527,6 +843,11 @@ const NanoProAutoDetector = (function () {
         detect: detect,
         diagnose: diagnose,
         findInvoiceAmount: findInvoiceAmount,
+        findEnvironment: findEnvironment,
+        findIsRental: findIsRental,
+        findTradePartnerName: findTradePartnerName,
+        detectPageInfo: detectPageInfo,
+        findSidebarFields: findSidebarFields,
         isTableVisible: isTableVisible,
         PRIMARY_SELECTOR: PRIMARY_SELECTOR
     };
