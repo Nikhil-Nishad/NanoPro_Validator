@@ -79,12 +79,12 @@ const NanoProOverlay = (function () {
     }
 
     .nanopro-badge.loading {
-      background: linear-gradient(135deg, #6366f1, #4f46e5);
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
       color: white;
     }
 
     .nanopro-badge.ready {
-      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      background: linear-gradient(135deg, #475569, #334155);
       color: white;
     }
 
@@ -689,6 +689,125 @@ const NanoProOverlay = (function () {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    /* Multi-page status tracker styling */
+    .nanopro-multipage-tracker {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+    }
+
+    .nanopro-multipage-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .nanopro-multipage-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .nanopro-multipage-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 6px;
+    }
+
+    .nanopro-page-card {
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      transition: all 0.15s ease;
+    }
+
+    .nanopro-page-card.is-current-page {
+      box-shadow: 0 0 0 2px #2563eb;
+    }
+
+    .nanopro-page-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .nanopro-page-card-title {
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .nanopro-curr-tag {
+      font-size: 10px;
+      font-weight: 700;
+      color: #2563eb;
+    }
+
+    .nanopro-page-status-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      white-space: nowrap;
+    }
+
+    .nanopro-page-card-detail {
+      font-size: 11px;
+      opacity: 0.85;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    }
+
+    .nanopro-page-valid {
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+    .nanopro-page-valid .nanopro-page-status-pill {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .nanopro-page-error {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #991b1b;
+    }
+    .nanopro-page-error .nanopro-page-status-pill {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+
+    .nanopro-page-caution {
+      background: #fffbeb;
+      border-color: #fde68a;
+      color: #92400e;
+    }
+    .nanopro-page-caution .nanopro-page-status-pill {
+      background: #fef3c7;
+      color: #b45309;
+    }
+
+    .nanopro-page-unscanned {
+      background: #f1f5f9;
+      border-color: #e2e8f0;
+      color: #64748b;
+    }
+    .nanopro-page-unscanned .nanopro-page-status-pill {
+      background: #e2e8f0;
+      color: #475569;
     }
 
     /* Large calculation display */

@@ -17,7 +17,7 @@ const NanoProTableParser = (function () {
     // Exact column names from Nanonets
     const PRIMARY_COLUMNS = {
         rowNum: ['#', 'no', 'no.', 's.no', 'sno', 'sr.no', 'sl.no'],
-        qty: ['qty', 'qty_ordered', 'quantity'],
+        qty: ['qty', 'quantity'],
         price: ['item_price', 'unit_price', 'price', 'rate'],
         amount: ['line_amount', 'amount', 'total', 'line_total']
     };
@@ -25,7 +25,7 @@ const NanoProTableParser = (function () {
     // All known column names (to skip during validation)
     const SKIP_COLUMNS = [
         '#', 'computations', 'cyl_returned', 'cyl_shipped', 'description',
-        'item_no', 'item_no_2', 'unit_of_measure'
+        'item_no', 'item_no_2', 'unit_of_measure', 'qty_ordered'
     ];
 
     // Fuzzy patterns for OCR tolerance
@@ -33,7 +33,6 @@ const NanoProTableParser = (function () {
         rowNum: [/^#$/i, /^no\.?$/i, /^s\.?no\.?$/i, /^sr\.?no\.?$/i],
         qty: [
             /^qty$/i,
-            /^qty[_\s]?ordered$/i,
             /^q[ty]{1,2}$/i,
             /^quantity$/i
         ],
