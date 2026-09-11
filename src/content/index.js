@@ -16,9 +16,9 @@
     const CONFIG = {
         autoValidate: false,
         observeMutations: true,
-        retryAttempts: 3,
-        retryDelay: 1000,
-        autoDetectDelay: 500  // Wait for React to render
+        retryAttempts: 10, // Increased for graceful loading of new files (10 * 350ms = 3.5s)
+        retryDelay: 350,
+        autoDetectDelay: 200  // Optimized for fast rendering response
     };
 
     // State
@@ -31,11 +31,41 @@
     let lastDetectedStateHash = null;
     let initializedForFile = null;
 
+    // Persisted across documents and sessions
+    let lastRememberedEnvironment = null;
+
+    async function loadRememberedEnvironment() {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                const data = await chrome.storage.local.get(['nanopro_last_environment']);
+                if (data && data.nanopro_last_environment) {
+                    lastRememberedEnvironment = data.nanopro_last_environment;
+                    console.log('[NanoPro] Loaded remembered environment from storage:', lastRememberedEnvironment);
+                }
+            }
+        } catch (e) {
+            console.warn('[NanoPro] Error loading remembered environment:', e);
+        }
+    }
+
+    async function saveRememberedEnvironment(env) {
+        if (!env || !env.raw) return;
+        lastRememberedEnvironment = { ...env, isRemembered: true };
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                await chrome.storage.local.set({ nanopro_last_environment: lastRememberedEnvironment });
+            }
+        } catch (e) {
+            // Ignore storage errors in isolated context
+        }
+    }
+
     // Multi-page document state store (session scoped per invoice file)
     let multiPageStore = {
         fileHash: null,
         totalPages: 1,
         lastInvoiceAmount: null,
+        lastInvoiceNumber: null,
         pages: {} // pageNum -> { sumAmount: number, rowCount: number, results: array, timestamp: number }
     };
 
@@ -45,6 +75,7 @@
         environment: null,
         tradePartnerName: null,
         invoiceAmount: null,
+        invoiceNumber: null,
         isRentalList: [],
         pageInfo: null
     };
@@ -55,14 +86,23 @@
      * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6
      * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6
      */
-    function isSameDocumentInstance(hashA, hashB) {
+    function isSameDocumentInstance(hashA, hashB, invoiceNumA = null, invoiceNumB = null) {
         if (typeof NanoProAutoDetector !== 'undefined' && NanoProAutoDetector.isSameDocumentInstance) {
-            return NanoProAutoDetector.isSameDocumentInstance(hashA, hashB);
+            return NanoProAutoDetector.isSameDocumentInstance(hashA, hashB, invoiceNumA, invoiceNumB);
         }
         if (!hashA || !hashB) return false;
+
+        // If both invoice numbers are known and DIFFERENT, they are distinct invoices!
+        if (invoiceNumA && invoiceNumB && invoiceNumA.trim() !== '' && invoiceNumB.trim() !== '') {
+            if (invoiceNumA.trim().toLowerCase() !== invoiceNumB.trim().toLowerCase()) {
+                return false;
+            }
+        }
+
         if (hashA === hashB) return true;
 
-        const pattern = /#\/ocr\/test\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
+        // Broaden route support: /ocr/test/, /ocr/, /review/, /workflow/, /models/
+        const pattern = /#\/(?:ocr|review|workflow|models)(?:\/test)?\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
         const matchA = hashA.match(pattern);
         const matchB = hashB.match(pattern);
 
@@ -75,6 +115,11 @@
 
         if (modelIdA !== modelIdB) return false;
         if (fileIdA === fileIdB) return true;
+
+        // If both invoice numbers are identical, they belong to the same document/invoice
+        if (invoiceNumA && invoiceNumB && invoiceNumA.trim() !== '' && invoiceNumA.trim().toLowerCase() === invoiceNumB.trim().toLowerCase()) {
+            return true;
+        }
 
         // Check if both are UUIDv1 for pages of the same multipage document
         const partsA = fileIdA.split('-');
@@ -112,9 +157,10 @@
         if (!isSameDocumentInstance(sidebarMemory.instanceHash, currentHash)) {
             sidebarMemory = {
                 instanceHash: currentHash,
-                environment: null,
+                environment: lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null,
                 tradePartnerName: null,
                 invoiceAmount: null,
+                invoiceNumber: null,
                 isRentalList: [],
                 pageInfo: null
             };
@@ -123,11 +169,29 @@
         const live = NanoProAutoDetector.findSidebarFields();
         let hasChanges = false;
 
+        // 0. Invoice Number
+        if (live.invoiceNumber && live.invoiceNumber.value) {
+            const prevVal = sidebarMemory.invoiceNumber?.value;
+            if (prevVal !== live.invoiceNumber.value) {
+                // If invoice number changed across pages in multiPageStore, it's a new invoice
+                if (multiPageStore.lastInvoiceNumber && 
+                    multiPageStore.lastInvoiceNumber.toLowerCase() !== live.invoiceNumber.value.toLowerCase()) {
+                    console.log(`[NanoPro v3] New invoice detected within document: "${multiPageStore.lastInvoiceNumber}" -> "${live.invoiceNumber.value}". Starting fresh multi-page accumulation.`);
+                    multiPageStore.pages = {};
+                    multiPageStore.lastInvoiceAmount = null;
+                }
+                multiPageStore.lastInvoiceNumber = live.invoiceNumber.value;
+                sidebarMemory.invoiceNumber = { ...live.invoiceNumber, isRemembered: false };
+                hasChanges = true;
+            }
+        }
+
         // 1. Environment
         if (live.environment && live.environment.raw) {
             const prevVal = sidebarMemory.environment?.raw;
-            if (prevVal !== live.environment.raw) {
+            if (prevVal !== live.environment.raw || sidebarMemory.environment?.isRemembered) {
                 sidebarMemory.environment = { ...live.environment, isRemembered: false };
+                saveRememberedEnvironment(live.environment);
                 hasChanges = true;
             }
         }
@@ -193,19 +257,150 @@
         const isLiveEnv = !!NanoProAutoDetector.findEnvironment();
         const isLiveTP = !!NanoProAutoDetector.findTradePartnerName();
         const isLiveInv = !!NanoProAutoDetector.findInvoiceAmount();
+        const isLiveInvNum = !!NanoProAutoDetector.findInvoiceNumber();
+
+        const env = sidebarMemory.environment ? 
+            { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : 
+            (lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null);
 
         return {
-            environment: sidebarMemory.environment ? { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : null,
+            environment: env,
             tradePartnerName: sidebarMemory.tradePartnerName ? { ...sidebarMemory.tradePartnerName, isRemembered: !isLiveTP } : null,
             invoiceAmount: sidebarMemory.invoiceAmount ? { ...sidebarMemory.invoiceAmount, isRemembered: !isLiveInv } : null,
+            invoiceNumber: sidebarMemory.invoiceNumber ? { ...sidebarMemory.invoiceNumber, isRemembered: !isLiveInvNum } : null,
             isRental: sidebarMemory.isRentalList && sidebarMemory.isRentalList.length > 0 ? sidebarMemory.isRentalList : [],
             pageInfo: sidebarMemory.pageInfo || NanoProAutoDetector.detectPageInfo()
         };
     }
 
+    // ────────────────────────────────────────────────────────
+    // SIDE PANEL SCROLL DETECTION (40% gesture threshold)
+    // ────────────────────────────────────────────────────────
+
+    let scrollGestureMap = new WeakMap();
+    let scrollGestureResetTimers = new WeakMap();
+
+    /**
+     * Check if a scroll target belongs to the side panel
+     */
+    function isSidePanelElement(el) {
+        if (!el || el === window || el === document) {
+            // Check if active sidebar exists on screen
+            const sidebar = document.querySelector('[data-testid*="sidebar" i], [class*="sidebar" i], [class*="drawer" i], [class*="panel" i]:not(.nanopro-panel)');
+            return !!sidebar;
+        }
+
+        // Never consider our own overlay/panel
+        if (el.closest && el.closest('.nanopro-panel, .nanopro-badge, .nanopro-overlay, #nanopro-root')) {
+            return false;
+        }
+
+        // Check if element contains sidebar fields or labels
+        if (el.querySelector && el.querySelector('[data-testid*="label_box_div"], [class*="ocr_text" i], [data-index]')) {
+            return true;
+        }
+
+        // Check if element is inside a sidebar/panel/drawer container
+        if (el.closest && el.closest('[data-testid*="sidebar" i], [class*="sidebar" i], [class*="drawer" i], [class*="properties" i], [role="complementary"]')) {
+            return true;
+        }
+
+        // Geometry heuristic: side panel is typically on the right or left half of screen (< 65% width)
+        if (el.getBoundingClientRect) {
+            const rect = el.getBoundingClientRect();
+            const isSide = (rect.left > window.innerWidth * 0.45 || rect.right < window.innerWidth * 0.55);
+            const isNarrow = rect.width > 100 && rect.width < window.innerWidth * 0.65;
+            const isScrollable = el.scrollHeight > el.clientHeight + 20;
+            if (isSide && isNarrow && isScrollable) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Track scroll gesture and re-trigger state recheck if scrolled ~40% in a single time
+     */
+    function handleSidePanelScroll(target) {
+        if (!target) return;
+
+        const currentScrollTop = target === document || target === document.documentElement || target === window
+            ? (window.pageYOffset || document.documentElement.scrollTop || 0)
+            : (target.scrollTop || 0);
+
+        const clientHeight = target === document || target === document.documentElement || target === window
+            ? (window.innerHeight || document.documentElement.clientHeight || 1)
+            : (target.clientHeight || 1);
+
+        const scrollHeight = target === document || target === document.documentElement || target === window
+            ? (document.documentElement.scrollHeight || 1)
+            : (target.scrollHeight || 1);
+
+        const maxScroll = Math.max(scrollHeight - clientHeight, 1);
+
+        // Get or initialize gesture start
+        const key = (target === window || target === document) ? document.documentElement : target;
+        let gesture = scrollGestureMap.get(key);
+
+        if (!gesture) {
+            gesture = { startScrollTop: currentScrollTop, lastScrollTop: currentScrollTop, triggered: false };
+            scrollGestureMap.set(key, gesture);
+        }
+
+        // Reset gesture after 400ms of scroll idle
+        let timer = scrollGestureResetTimers.get(key);
+        if (timer) clearTimeout(timer);
+        scrollGestureResetTimers.set(key, setTimeout(() => {
+            scrollGestureMap.delete(key);
+        }, 400));
+
+        // Calculate scroll delta in this single gesture
+        const delta = Math.abs(currentScrollTop - gesture.startScrollTop);
+        const fractionOfVisible = delta / clientHeight;
+        const fractionOfTotal = delta / maxScroll;
+
+        // "around 40% in a single time" -> threshold >= 0.38 (around 40%)
+        const is40PercentScroll = (fractionOfVisible >= 0.38 || fractionOfTotal >= 0.38);
+
+        if (is40PercentScroll && !gesture.triggered) {
+            gesture.triggered = true; // Only trigger once per 40% swipe
+            gesture.startScrollTop = currentScrollTop; // Reset start so a subsequent 40% swipe triggers again
+
+            const pct = Math.round(Math.max(fractionOfVisible, fractionOfTotal) * 100);
+            console.log(`[NanoPro v3] Side panel scrolled ~${pct}% (>=40% in single time). Re-triggering extension state recheck...`);
+
+            // 1. Scan & remember any newly visible fields
+            scanAndRememberSidebarFields();
+
+            // 2. Re-trigger extension state recheck immediately
+            const fields = getEffectiveSidebarFields();
+            if (validationResult) {
+                attachTotalValidation(validationResult, fields.invoiceAmount, fields.pageInfo);
+                const sidebarResult = attachSidebarValidation(validationResult, fields);
+                const rawItemNos = (validationResult.results || []).map(r => r.itemNoValue ?? null);
+                attachItemNoValidation(validationResult, rawItemNos, true, sidebarResult?.rentalStatus);
+                updateUI(validationResult);
+            }
+
+            // 3. In auto mode, also force auto-detection recheck
+            if (currentMode === 'auto') {
+                runAutoDetection(0, false, true /* force */, 2);
+            }
+        }
+    }
+
     let scrollCaptureTimer = null;
     function setupScrollCapture() {
         window.addEventListener('scroll', (e) => {
+            const target = e.target;
+
+            // Check if this scroll is on the side panel
+            if (isSidePanelElement(target)) {
+                handleSidePanelScroll(target);
+            }
+
+            // Debounced field aggregator for newly visible fields
             if (scrollCaptureTimer) clearTimeout(scrollCaptureTimer);
             scrollCaptureTimer = setTimeout(() => {
                 if (currentMode === 'auto' || validationResult) {
@@ -221,6 +416,17 @@
                     }
                 }
             }, 250);
+        }, { capture: true, passive: true });
+
+        // Also track wheel events on side panel for trackpad/mousewheel flick gestures
+        window.addEventListener('wheel', (e) => {
+            const target = e.target;
+            if (isSidePanelElement(target)) {
+                const scrollable = target.closest ? target.closest('.overflow-auto, .overflow-y-auto, [class*="scroll" i], [class*="sidebar" i], [class*="drawer" i]') : target;
+                if (scrollable) {
+                    handleSidePanelScroll(scrollable);
+                }
+            }
         }, { capture: true, passive: true });
     }
 
@@ -243,6 +449,7 @@
 
         // v2: Load saved mode preference
         await loadMode();
+        await loadRememberedEnvironment();
 
         // Inject UI overlay
         NanoProOverlay.inject();
@@ -281,6 +488,9 @@
         // Setup capture-phase scroll listener to remember sidebar fields when scrolling
         setupScrollCapture();
 
+        // Start reactive input listeners on table inputs
+        setupInputListeners();
+
         isInitialized = true;
         console.log(`[NanoPro v3] Initialization complete — Mode: ${currentMode}`);
     }
@@ -297,7 +507,7 @@
      */
     function isSingleFilePage() {
         const hash = window.location.hash;
-        return /^#\/ocr\/test\/[^/]+\/[^/?]+/.test(hash);
+        return /^#\/(?:ocr|review|workflow|models)(?:\/test)?\/[^/]+\/[^/?]+/i.test(hash);
     }
 
 
@@ -376,10 +586,10 @@
     /**
      * Schedule auto-detection after delay (wait for React render)
      */
-    function scheduleAutoDetect() {
+    function scheduleAutoDetect(maxRetries = CONFIG.retryAttempts) {
         clearAutoDetect();
-        console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms`);
-        autoDetectTimer = setTimeout(runAutoDetection, CONFIG.autoDetectDelay);
+        console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms (maxRetries=${maxRetries})`);
+        autoDetectTimer = setTimeout(() => runAutoDetection(0, false, false, maxRetries), CONFIG.autoDetectDelay);
 
         // Start non-intrusive 1-second background polling for fast recalculation
         autoPollTimer = setInterval(() => {
@@ -405,12 +615,16 @@
 
     /**
      * Run automatic table detection and validation
+     * @param {number} retryCount
+     * @param {boolean} isBackgroundPoll
+     * @param {boolean} force - if true, bypasses state hash deduplication
+     * @param {number} maxRetries
      */
-    async function runAutoDetection(retryCount = 0, isBackgroundPoll = false) {
+    async function runAutoDetection(retryCount = 0, isBackgroundPoll = false, force = false, maxRetries = CONFIG.retryAttempts) {
         if (currentMode !== 'auto') return;
 
         if (!isBackgroundPoll) {
-            console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1})...`);
+            console.log(`[NanoPro v2] Running auto-detection (attempt ${retryCount + 1}/${maxRetries}, force=${force})...`);
             NanoProBadge.setLoading();
         }
 
@@ -423,13 +637,54 @@
                     console.warn('[NanoPro v2] Auto-detection failed:', detectResult.message);
                 }
 
-                // Retry if table might not have loaded yet
-                if (retryCount < CONFIG.retryAttempts && !isBackgroundPoll) {
-                    console.log(`[NanoPro v2] Retrying in ${CONFIG.retryDelay}ms...`);
+                // Check if this is a valid document page with NO TABLE (e.g. cover page, terms, signature, delivery slip)
+                if (isSingleFilePage()) {
+                    const pageFields = getEffectiveSidebarFields();
+                    const pInfo = pageFields.pageInfo || NanoProAutoDetector.detectPageInfo();
+                    const pageNum = pInfo?.currentPage || 1;
+                    const isDocPage = pInfo && (pInfo.isMultiPage || pInfo.totalPages > 1 || 
+                        pageFields.environment || pageFields.invoiceAmount || pageFields.tradePartnerName || pageFields.invoiceNumber);
+
+                    if (isDocPage) {
+                        // Quick wait of 1 retry (150ms) for table to render if page just transitioned
+                        const maxTableWait = 1;
+                        if (retryCount < maxTableWait && !isBackgroundPoll) {
+                            console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
+                            autoDetectTimer = setTimeout(
+                                () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
+                                150
+                            );
+                            return;
+                        }
+
+                        // Table did not appear — legitimately a table-less document page!
+                        console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo.totalPages}) has no table. Processing as 0-row page...`);
+                        lastDetectedStateHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
+                        processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
+                        return;
+                    }
+                }
+
+                // Retry if table might not have loaded yet on initial load
+                if (retryCount < maxRetries && !isBackgroundPoll) {
+                    console.log(`[NanoPro v2] Retrying (${retryCount + 1}/${maxRetries}) in ${CONFIG.retryDelay}ms...`);
                     autoDetectTimer = setTimeout(
-                        () => runAutoDetection(retryCount + 1),
+                        () => runAutoDetection(retryCount + 1, false, force, maxRetries),
                         CONFIG.retryDelay
                     );
+                    return;
+                }
+
+                // CRITICAL: If we already have a valid validationResult,
+                // NEVER wipe the badge to "No Data Found" due to temporary detection misses or DOM debounce!
+                if (validationResult && validationResult.summary && validationResult.summary.total >= 0 && validationResult.success) {
+                    console.log('[NanoPro v3] Preserving existing valid state despite temporary detection miss');
+                    updateUI(validationResult);
+                    return;
+                }
+
+                // If on a single file page and still loading in background, don't prematurely flash No Data
+                if (isBackgroundPoll && isSingleFilePage()) {
                     return;
                 }
 
@@ -439,11 +694,11 @@
             }
 
             // --- State Hashing for Performance ---
-            // Create a simple string representation of the parsed table + sidebar fields to check if DOM changed
             const sidebarFields = getEffectiveSidebarFields();
 
             const isRentalHash = (sidebarFields.isRental || []).map(r => r.raw).join(',');
             const sidebarHash = [
+                sidebarFields.invoiceNumber?.raw || 'no-invnum',
                 sidebarFields.invoiceAmount?.raw || 'no-inv',
                 sidebarFields.invoiceAmount?.multiple ? 'multi-inv' : '',
                 sidebarFields.environment?.raw || 'no-env',
@@ -454,12 +709,15 @@
 
             const currentStateHash = JSON.stringify(detectResult.rows) + '|' + sidebarHash;
 
-            if (currentStateHash === lastDetectedStateHash) {
-                // The inputs on the screen haven't changed since last validation, silently discard to save cycles
+            const badgeState = NanoProBadge.getState ? NanoProBadge.getState() : null;
+            const needsRefresh = force || badgeState === 'loading' || badgeState === 'noData' || badgeState === 'ready' || !validationResult;
+
+            if (currentStateHash === lastDetectedStateHash && !needsRefresh) {
+                // The inputs on the screen haven't changed and badge is already up to date, silently return
                 return;
             }
 
-            if (isBackgroundPoll) {
+            if (isBackgroundPoll && !needsRefresh) {
                 console.log(`[NanoPro v2] Background poll detected changes, re-validating...`);
                 NanoProBadge.setLoading();
             }
@@ -468,19 +726,25 @@
             lastDetectedStateHash = currentStateHash;
 
             // We have extracted rows — validate them
-            processAutoDetectedRows(detectResult.rows, detectResult.columnMapping, sidebarFields);
+            processAutoDetectedRows(detectResult.rows, detectResult.columnMapping, sidebarFields, false);
 
         } catch (error) {
             console.error('[NanoPro v2] Auto-detection error:', error);
-            NanoProBadge.setNoData();
+            if (validationResult && validationResult.summary && validationResult.success) {
+                try {
+                    updateUI(validationResult);
+                } catch (e) {}
+            } else {
+                NanoProBadge.setNoData();
+            }
         }
     }
 
     /**
      * Process auto-detected rows through validation pipeline
      */
-    function processAutoDetectedRows(rows, columnMapping, sidebarFields = null) {
-        console.log(`[NanoPro v3] Validating ${rows.length} auto-detected rows`);
+    function processAutoDetectedRows(rows, columnMapping, sidebarFields = null, hasNoTable = false) {
+        console.log(`[NanoPro v3] Validating ${rows.length} auto-detected rows (hasNoTable=${hasNoTable})`);
 
         const fields = sidebarFields || getEffectiveSidebarFields();
 
@@ -488,35 +752,48 @@
         const currentPage = pageInfo.currentPage || 1;
         const totalPages = pageInfo.totalPages || 1;
 
-        // Convert raw string values to the {value, confidence} format the validator expects
-        // NanoProParser.parse() returns { value: number, confidence: 0-1, original: string }
-        const validationRows = rows.map(row => ({
-            qty: row.qty ? NanoProParser.parse(row.qty) : null,
-            price: row.price ? NanoProParser.parse(row.price) : null,
-            amount: row.amount ? NanoProParser.parse(row.amount) : null
-        }));
+        let validationRows = [];
+        let rawItemNos = [];
+        let hasItemNoColumn = false;
 
-        // Keep raw item_no for each row (not parsed as number)
-        // Use ?? instead of || to preserve empty strings ("" is a valid blank value)
-        const rawItemNos = rows.map(row => row.item_no ?? null);
-        const hasItemNoColumn = !!(columnMapping && columnMapping.item_no);
+        if (hasNoTable || rows.length === 0) {
+            validationResult = {
+                success: true,
+                results: [],
+                summary: { total: 0, valid: 0, invalid: 0, incomplete: 0, caution: 0 },
+                hasNoTable: true,
+                validRows: [],
+                invalidRows: []
+            };
+        } else {
+            // Convert raw string values to the {value, confidence} format the validator expects
+            validationRows = rows.map(row => ({
+                qty: row.qty ? NanoProParser.parse(row.qty) : null,
+                price: row.price ? NanoProParser.parse(row.price) : null,
+                amount: row.amount ? NanoProParser.parse(row.amount) : null
+            }));
 
-        console.log('[NanoPro v3] Validation input:', validationRows);
-        console.log('[NanoPro v3] Item_No column detected:', hasItemNoColumn);
+            // Keep raw item_no for each row (not parsed as number)
+            rawItemNos = rows.map(row => row.item_no ?? null);
+            hasItemNoColumn = !!(columnMapping && columnMapping.item_no);
 
-        // Validate calculations
-        validationResult = NanoProValidator.validateAll(validationRows);
+            console.log('[NanoPro v3] Validation input:', validationRows);
+            console.log('[NanoPro v3] Item_No column detected:', hasItemNoColumn);
 
-        if (!validationResult.success) {
-            console.error('[NanoPro v3] Validation failed:', validationResult.error);
-            NanoProBadge.setNoData();
-            return;
+            // Validate calculations
+            validationResult = NanoProValidator.validateAll(validationRows);
+
+            if (!validationResult.success) {
+                console.error('[NanoPro v3] Validation failed:', validationResult.error);
+                NanoProBadge.setNoData();
+                return;
+            }
         }
 
         // Calculate current page's sum of Line_Amount
         let pageSum = 0;
         let pageSummedRows = 0;
-        for (const row of validationResult.results) {
+        for (const row of (validationResult.results || [])) {
             if (row.actual !== undefined && row.actual !== null) {
                 pageSum += row.actual;
                 pageSummedRows++;
@@ -527,27 +804,73 @@
         }
         pageSum = NanoProParser.round(pageSum, 2);
 
+        // Attach supplementary validations
+        const sidebarResult = attachSidebarValidation(validationResult, fields);
+        if (!hasNoTable && rows.length > 0) {
+            attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn, sidebarResult?.rentalStatus);
+        } else {
+            validationResult.itemNoWarnings = [];
+            validationResult.itemNoErrors = [];
+        }
+
+        // Compute error breakdown for this specific page
+        const calcErrors = validationResult.summary?.invalid || 0;
+        const itemNoErrors = validationResult.itemNoErrors?.length || 0;
+        const itemNoWarnings = (validationResult.itemNoWarnings || []).filter(w => w.severity !== 'ERROR').length;
+        const hasErrors = (calcErrors + itemNoErrors) > 0;
+        const hasCautions = itemNoWarnings > 0;
+
+        let errorSummary = hasNoTable ? 'No table (0 items)' : 'Valid';
+        if (hasErrors) {
+            const errParts = [];
+            if (calcErrors > 0) errParts.push(`${calcErrors} calc error${calcErrors > 1 ? 's' : ''}`);
+            if (itemNoErrors > 0) errParts.push(`${itemNoErrors} item_no error${itemNoErrors > 1 ? 's' : ''}`);
+            errorSummary = errParts.join(', ');
+        } else if (hasCautions) {
+            errorSummary = `${itemNoWarnings} caution${itemNoWarnings > 1 ? 's' : ''}`;
+        }
+
+        // Check if invoice_number changed to partition multiPageStore
+        const currentInvNum = fields.invoiceNumber?.value || null;
+        if (currentInvNum && multiPageStore.lastInvoiceNumber && 
+            currentInvNum.toLowerCase() !== multiPageStore.lastInvoiceNumber.toLowerCase()) {
+            console.log(`[NanoPro v3] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Resetting multi-page accumulation.`);
+            multiPageStore.pages = {};
+            multiPageStore.lastInvoiceAmount = null;
+        }
+        if (currentInvNum) {
+            multiPageStore.lastInvoiceNumber = currentInvNum;
+        }
+
         // Update multiPageStore
-        if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash)) {
+        if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash, multiPageStore.lastInvoiceNumber, currentInvNum)) {
             multiPageStore.fileHash = window.location.hash;
             multiPageStore.pages = {};
             multiPageStore.lastInvoiceAmount = null;
         }
         multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
         multiPageStore.pages[currentPage] = {
+            pageNumber: currentPage,
             sumAmount: pageSum,
             rowCount: pageSummedRows,
-            results: validationResult.results,
+            totalRows: (validationResult.results || []).length,
+            calcErrors: calcErrors,
+            itemNoErrors: itemNoErrors,
+            itemNoWarnings: itemNoWarnings,
+            hasErrors: hasErrors,
+            hasCautions: hasCautions,
+            errorSummary: errorSummary,
+            hasNoTable: !!hasNoTable,
+            status: hasErrors ? 'INVALID' : (hasCautions ? 'CAUTION' : 'VALID'),
+            results: validationResult.results || [],
             timestamp: Date.now()
         };
         if (fields.invoiceAmount) {
             multiPageStore.lastInvoiceAmount = fields.invoiceAmount;
         }
 
-        // Attach supplementary validations
+        // Attach total validation (calculates multi-page sums and aggregates page statuses)
         attachTotalValidation(validationResult, fields.invoiceAmount, pageInfo);
-        const sidebarResult = attachSidebarValidation(validationResult, fields);
-        attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn, sidebarResult?.rentalStatus);
 
         // Update UI
         updateUI(validationResult);
@@ -593,14 +916,44 @@
             let totalSummedRows = 0;
             const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
             const pageBreakdown = {};
+            const pagesWithErrors = [];
+            const pagesWithCautions = [];
+            const pageStatusList = [];
 
             for (const p of recordedPages) {
                 const pData = multiPageStore.pages[p];
                 cumulativeSum += pData.sumAmount;
                 totalSummedRows += pData.rowCount;
                 pageBreakdown[p] = pData.sumAmount;
+
+                if (pData.hasErrors) {
+                    pagesWithErrors.push(p);
+                } else if (pData.hasCautions) {
+                    pagesWithCautions.push(p);
+                }
+                pageStatusList.push({
+                    page: p,
+                    status: pData.status,
+                    calcErrors: pData.calcErrors || 0,
+                    itemNoErrors: pData.itemNoErrors || 0,
+                    itemNoWarnings: pData.itemNoWarnings || 0,
+                    errorSummary: pData.errorSummary || 'Valid',
+                    hasNoTable: !!pData.hasNoTable,
+                    sumAmount: pData.sumAmount || 0,
+                    rowCount: pData.rowCount || 0,
+                    totalRows: pData.totalRows || 0
+                });
             }
             cumulativeSum = NanoProParser.round(cumulativeSum, 2);
+
+            result.multiPageErrors = {
+                isMultiPage: isMultiPage,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                pagesWithErrors: pagesWithErrors,
+                pagesWithCautions: pagesWithCautions,
+                pageStatusList: pageStatusList
+            };
 
             const missingPages = [];
             for (let p = 1; p <= totalPages; p++) {
@@ -684,8 +1037,42 @@
             }
 
             // --- MULTI PAGE DOCUMENT ---
-            // If we are NOT on the last page and don't have all pages recorded:
-            if (!isLastPage && !hasAllPages) {
+            // If we are NOT on the last page:
+            if (!isLastPage) {
+                const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount;
+                // If all pages have been recorded AND we have an invoice amount (e.g. from previous visit to last page):
+                if (hasAllPages && effectiveInv && effectiveInv.value !== null) {
+                    const diff = NanoProParser.round(Math.abs(cumulativeSum - effectiveInv.value), 2);
+                    const tolerance = 0.10;
+                    const isMatch = diff <= tolerance;
+                    result.totalValidation = {
+                        isMultiPage: true,
+                        currentPage: currentPage,
+                        totalPages: totalPages,
+                        pageSum: pageSum,
+                        sumAmount: cumulativeSum,
+                        summedRows: totalSummedRows,
+                        recordedPages: recordedPages,
+                        missingPages: [],
+                        pageBreakdown: pageBreakdown,
+                        pagesWithErrors: pagesWithErrors,
+                        pagesWithCautions: pagesWithCautions,
+                        pageStatusList: pageStatusList,
+                        invoiceAmount: effectiveInv.value,
+                        invoiceAmountRaw: effectiveInv.raw,
+                        isRemembered: true,
+                        difference: diff,
+                        tolerance: tolerance,
+                        status: isMatch ? 'MATCH' : 'MISMATCH',
+                        selector: effectiveInv.selector,
+                        message: isMatch
+                            ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Matches invoice_amount on Page ${totalPages}.`
+                            : `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Mismatches invoice_amount ($${effectiveInv.value.toFixed(2)}) on Page ${totalPages}.`
+                    };
+                    return;
+                }
+
+                // Earlier page still pending other pages or final invoice amount
                 result.totalValidation = {
                     isMultiPage: true,
                     currentPage: currentPage,
@@ -696,7 +1083,10 @@
                     recordedPages: recordedPages,
                     missingPages: missingPages,
                     pageBreakdown: pageBreakdown,
-                    invoiceAmount: invoiceAmount?.value || null,
+                    pagesWithErrors: pagesWithErrors,
+                    pagesWithCautions: pagesWithCautions,
+                    pageStatusList: pageStatusList,
+                    invoiceAmount: effectiveInv?.value || null,
                     status: 'MULTI_PAGE_PENDING',
                     message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. Navigate to page ${totalPages} for final invoice total.`
                 };
@@ -704,8 +1094,9 @@
                 return;
             }
 
-            // We are on the last page, or we have recorded all pages!
-            if (!invoiceAmount) {
+            // We ARE on the last page!
+            const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount;
+            if (!effectiveInv || effectiveInv.value === null) {
                 result.totalValidation = {
                     isMultiPage: true,
                     currentPage: currentPage,
@@ -716,9 +1107,14 @@
                     recordedPages: recordedPages,
                     missingPages: missingPages,
                     pageBreakdown: pageBreakdown,
+                    pagesWithErrors: pagesWithErrors,
+                    pagesWithCautions: pagesWithCautions,
+                    pageStatusList: pageStatusList,
                     invoiceAmount: null,
                     status: 'NOT_FOUND',
-                    message: `invoice_amount not found on last page (Page ${totalPages})`
+                    message: hasAllPages
+                        ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Scroll sidebar to reveal invoice_amount for final verification.`
+                        : `invoice_amount not found on last page (Page ${totalPages})`
                 };
                 console.log(`[NanoPro] MultiPage: Cumulative Sum=${cumulativeSum} | invoice_amount not found on last page`);
                 return;
@@ -736,8 +1132,11 @@
                     recordedPages: recordedPages,
                     missingPages: missingPages,
                     pageBreakdown: pageBreakdown,
-                    invoiceAmount: invoiceAmount.value,
-                    invoiceAmountRaw: invoiceAmount.raw,
+                    pagesWithErrors: pagesWithErrors,
+                    pagesWithCautions: pagesWithCautions,
+                    pageStatusList: pageStatusList,
+                    invoiceAmount: effectiveInv.value,
+                    invoiceAmountRaw: effectiveInv.raw,
                     status: 'PAGES_MISSING',
                     message: `Missing earlier pages: [${missingPages.join(', ')}] of ${totalPages}. Please visit all pages to accumulate all line items.`
                 };
@@ -745,8 +1144,8 @@
                 return;
             }
 
-            // All pages recorded & invoice_amount present! Compare cumulative sum to invoice_amount
-            const diff = NanoProParser.round(Math.abs(cumulativeSum - invoiceAmount.value), 2);
+            // All pages recorded & invoice_amount present on last page! Compare cumulative sum to invoice_amount
+            const diff = NanoProParser.round(Math.abs(cumulativeSum - effectiveInv.value), 2);
             const tolerance = 0.10;
             const isMatch = diff <= tolerance;
 
@@ -760,16 +1159,22 @@
                 recordedPages: recordedPages,
                 missingPages: [],
                 pageBreakdown: pageBreakdown,
-                invoiceAmount: invoiceAmount.value,
-                invoiceAmountRaw: invoiceAmount.raw,
-                isRemembered: !!invoiceAmount.isRemembered,
+                pagesWithErrors: pagesWithErrors,
+                pagesWithCautions: pagesWithCautions,
+                pageStatusList: pageStatusList,
+                invoiceAmount: effectiveInv.value,
+                invoiceAmountRaw: effectiveInv.raw,
+                isRemembered: !!effectiveInv.isRemembered,
                 difference: diff,
                 tolerance: tolerance,
                 status: isMatch ? 'MATCH' : 'MISMATCH',
-                selector: invoiceAmount.selector
+                selector: effectiveInv.selector,
+                message: isMatch
+                    ? `All ${totalPages} pages match invoice_amount ($${effectiveInv.value.toFixed(2)})`
+                    : `Multi-page cumulative sum ($${cumulativeSum.toFixed(2)}) does not match invoice_amount ($${effectiveInv.value.toFixed(2)})`
             };
 
-            console.log(`[NanoPro] MultiPage Total (${totalPages} pages): Cumulative Sum=${cumulativeSum} | Invoice=${invoiceAmount.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
+            console.log(`[NanoPro] MultiPage Total (${totalPages} pages): Cumulative Sum=${cumulativeSum} | Invoice=${effectiveInv.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
 
         } catch (e) {
             console.warn('[NanoPro] Total validation error:', e.message);
@@ -859,27 +1264,49 @@
                 }
             }
 
-            // 3. trade_partner_name check: must be present and not null/blank
+            // 3. trade_partner_name check: must be present and have a real value with at least 2 characters (e.g. "INSTANTLRN")
             let tradePartnerStatus = 'VALID';
             let tradePartnerMessage = '';
+            const rawTP = tradePartner?.raw?.trim() || '';
+            const alphanumericMatches = rawTP.match(/[a-zA-Z0-9]/g) || [];
+            const labelStrings = /^(trade[_\s]*partner[_\s]*(?:name)?)$/i;
+
             if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
                 tradePartnerStatus = 'ERROR';
                 tradePartnerMessage = 'trade_partner_name not found in sidebar';
                 errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-            } else if (tradePartner.raw.trim() === '') {
+            } else if (rawTP === '') {
                 tradePartnerStatus = 'ERROR';
                 tradePartnerMessage = 'trade_partner_name is blank';
                 errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+            } else if (labelStrings.test(rawTP)) {
+                tradePartnerStatus = 'ERROR';
+                tradePartnerMessage = 'trade_partner_name has no value (only label text found)';
+                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+            } else if (alphanumericMatches.length < 2) {
+                tradePartnerStatus = 'ERROR';
+                tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
+                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
             } else {
-                tradePartnerMessage = tradePartner.raw.trim();
+                tradePartnerMessage = rawTP;
             }
 
-            // 4. invoice_amount multiplicity check
+            // 4. invoice_amount multiplicity and page placement check
             let invoiceAmountMultiplicity = { status: 'VALID', message: '' };
             if (invoiceAmount && invoiceAmount.multiple) {
                 invoiceAmountMultiplicity.status = 'ERROR';
                 invoiceAmountMultiplicity.message = `Multiple instances of invoice_amount detected (${invoiceAmount.count})`;
                 errors.push({ field: 'invoice_amount', message: invoiceAmountMultiplicity.message });
+            }
+
+            // Single multi-page invoice rule: invoice_amount must only be on the last page!
+            const curPage = pageInfo?.currentPage || 1;
+            const totPages = Math.max(pageInfo?.totalPages || 1, multiPageStore.totalPages || 1);
+            const liveInvoiceAmount = NanoProAutoDetector.findInvoiceAmount();
+            if (totPages > 1 && curPage < totPages && liveInvoiceAmount) {
+                const placementMsg = `invoice_amount is present on Page ${curPage}, but should only be on the last page (Page ${totPages})`;
+                errors.push({ field: 'invoice_amount', message: placementMsg });
+                console.warn(`[NanoPro] Sidebar error: ${placementMsg}`);
             }
 
             const sidebarValidation = {
@@ -1029,25 +1456,37 @@
     function setupMutationObserver() {
         if (mutationObserver || currentMode !== 'auto') return;
 
-        const target = document.querySelector(NanoProAutoDetector.PRIMARY_SELECTOR);
+        // Try to find container, or fallback to body
+        const target = document.querySelector('[data-rbd-droppable-id]') ||
+                       document.querySelector(NanoProAutoDetector.PRIMARY_SELECTOR) ||
+                       document.querySelector('.overflow-auto') ||
+                       document.body;
         if (!target) return;
 
         let debounceTimer = null;
 
         mutationObserver = new MutationObserver((mutations) => {
+            // Only react to child node additions/removals
+            let hasChildChange = false;
+            for (const m of mutations) {
+                if (m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
+                    hasChildChange = true;
+                    break;
+                }
+            }
+            if (!hasChildChange) return;
+
             // Debounce: only re-validate after mutations settle
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                console.log('[NanoPro v2] Table mutation detected, re-validating...');
-                runAutoDetection();
-            }, 300);
+                console.log('[NanoPro v2] Table DOM change detected, re-validating...');
+                runAutoDetection(0, false, false);
+            }, 250);
         });
 
         mutationObserver.observe(target, {
             childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['value']
+            subtree: true
         });
 
         console.log('[NanoPro v2] MutationObserver active on table container');
@@ -1065,6 +1504,55 @@
     }
 
     // ────────────────────────────────────────────────────────
+    // REACTIVE USER INPUT LISTENERS
+    // ────────────────────────────────────────────────────────
+
+    let inputListenersAttached = false;
+    let inputDebounceTimer = null;
+
+    function handleUserInput(e) {
+        if (currentMode !== 'auto' && !validationResult) return;
+        const target = e.target;
+        if (!target) return;
+
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        if (!isInput) return;
+
+        // Ignore events from our own extension overlay
+        if (target.closest && (target.closest('.nanopro-badge') || target.closest('.nanopro-panel'))) {
+            return;
+        }
+
+        // Fast debounce: re-validate 200ms after user edits any cell
+        if (inputDebounceTimer) clearTimeout(inputDebounceTimer);
+        inputDebounceTimer = setTimeout(() => {
+            console.log('[NanoPro] User input detected in table cell, re-validating...');
+            if (currentMode === 'auto') {
+                runAutoDetection(0, false, true); // force = true to recalculate immediately
+            } else if (validationResult && lastSelection) {
+                processSelection(lastSelection);
+            }
+        }, 200);
+    }
+
+    function setupInputListeners() {
+        if (inputListenersAttached) return;
+        document.addEventListener('input', handleUserInput, true);
+        document.addEventListener('change', handleUserInput, true);
+        document.addEventListener('paste', handleUserInput, true);
+        inputListenersAttached = true;
+        console.log('[NanoPro] Reactive table input listeners attached');
+    }
+
+    function teardownInputListeners() {
+        if (!inputListenersAttached) return;
+        document.removeEventListener('input', handleUserInput, true);
+        document.removeEventListener('change', handleUserInput, true);
+        document.removeEventListener('paste', handleUserInput, true);
+        inputListenersAttached = false;
+    }
+
+    // ────────────────────────────────────────────────────────
     // MANUAL MODE (unchanged from v1)
     // ────────────────────────────────────────────────────────
 
@@ -1073,7 +1561,7 @@
      */
     function handleRefresh() {
         if (currentMode === 'auto') {
-            runAutoDetection();
+            runAutoDetection(0, false, true);
         } else {
             startSelectionMode();
         }
@@ -1179,16 +1667,57 @@
             }
             pageSum = NanoProParser.round(pageSum, 2);
 
+            // Attach sidebar validation
+            const sidebarResult = attachSidebarValidation(validationResult, fields);
+
+            // Compute error breakdown for this page
+            const calcErrors = validationResult.summary?.invalid || 0;
+            const itemNoErrors = validationResult.itemNoErrors?.length || 0;
+            const itemNoWarnings = (validationResult.itemNoWarnings || []).filter(w => w.severity !== 'ERROR').length;
+            const hasErrors = (calcErrors + itemNoErrors) > 0;
+            const hasCautions = itemNoWarnings > 0;
+
+            let errorSummary = 'Valid';
+            if (hasErrors) {
+                const errParts = [];
+                if (calcErrors > 0) errParts.push(`${calcErrors} calc error${calcErrors > 1 ? 's' : ''}`);
+                if (itemNoErrors > 0) errParts.push(`${itemNoErrors} item_no error${itemNoErrors > 1 ? 's' : ''}`);
+                errorSummary = errParts.join(', ');
+            } else if (hasCautions) {
+                errorSummary = `${itemNoWarnings} caution${itemNoWarnings > 1 ? 's' : ''}`;
+            }
+
+            // Check if invoice_number changed to partition multiPageStore
+            const currentInvNum = fields.invoiceNumber?.value || null;
+            if (currentInvNum && multiPageStore.lastInvoiceNumber && 
+                currentInvNum.toLowerCase() !== multiPageStore.lastInvoiceNumber.toLowerCase()) {
+                console.log(`[NanoPro] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Resetting multi-page accumulation.`);
+                multiPageStore.pages = {};
+                multiPageStore.lastInvoiceAmount = null;
+            }
+            if (currentInvNum) {
+                multiPageStore.lastInvoiceNumber = currentInvNum;
+            }
+
             // Update multiPageStore
-            if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash)) {
+            if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash, multiPageStore.lastInvoiceNumber, currentInvNum)) {
                 multiPageStore.fileHash = window.location.hash;
                 multiPageStore.pages = {};
                 multiPageStore.lastInvoiceAmount = null;
             }
             multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
             multiPageStore.pages[currentPage] = {
+                pageNumber: currentPage,
                 sumAmount: pageSum,
                 rowCount: pageSummedRows,
+                totalRows: validationResult.results.length,
+                calcErrors: calcErrors,
+                itemNoErrors: itemNoErrors,
+                itemNoWarnings: itemNoWarnings,
+                hasErrors: hasErrors,
+                hasCautions: hasCautions,
+                errorSummary: errorSummary,
+                status: hasErrors ? 'INVALID' : (hasCautions ? 'CAUTION' : 'VALID'),
                 results: validationResult.results,
                 timestamp: Date.now()
             };
@@ -1197,7 +1726,6 @@
             }
 
             attachTotalValidation(validationResult, fields.invoiceAmount, pageInfo);
-            attachSidebarValidation(validationResult, fields);
 
             // Step 5: Update UI
             updateUI(validationResult);
@@ -1217,24 +1745,129 @@
     // NAVIGATION & UI (shared)
     // ────────────────────────────────────────────────────────
 
+    let lastObservedHref = typeof window !== 'undefined' ? window.location.href : '';
+    let lastObservedPageNum = null;
+    let lastKnownInvoiceNumber = null;
+
+    /**
+     * Check navigation via 3 tracking methods:
+     * Method 1: Keep tracking the URL. If anything changes, reload/refresh extension state to reverify from start.
+     * Method 2: Keep tracking "invoice_number" in sidebar. If it changes, page/document changed.
+     *           If it is temporarily not visible then visible again on same page, user scrolled.
+     * Method 3: Keep tracking the page number for multi-page documents. If single-page file, not applicable.
+     */
+    function checkNavigationAndPageFlip() {
+        const currentHref = window.location.href;
+        const currentHash = window.location.hash;
+
+        // ─────────────────────────────────────────────────────────────
+        // METHOD 1: URL Tracking
+        // ─────────────────────────────────────────────────────────────
+        if (currentHash !== initializedForFile || currentHref !== lastObservedHref) {
+            console.log(`[NanoPro v3] Method 1: URL changed (${lastObservedHref} -> ${currentHref})`);
+            lastObservedHref = currentHref;
+            handleNavigation();
+            return;
+        }
+
+        if (!isSingleFilePage()) return;
+
+        // ─────────────────────────────────────────────────────────────
+        // METHOD 2: Sidebar invoice_number Tracking
+        // ─────────────────────────────────────────────────────────────
+        const liveInvNumObj = NanoProAutoDetector.findInvoiceNumber ? NanoProAutoDetector.findInvoiceNumber() : null;
+        const liveInvNum = (liveInvNumObj && liveInvNumObj.value) ? liveInvNumObj.value.trim() : null;
+
+        if (liveInvNum) {
+            if (lastKnownInvoiceNumber === null) {
+                lastKnownInvoiceNumber = liveInvNum;
+                sidebarMemory.invoiceNumber = liveInvNumObj;
+                multiPageStore.lastInvoiceNumber = liveInvNum;
+            } else if (liveInvNum.toLowerCase() !== lastKnownInvoiceNumber.toLowerCase()) {
+                console.log(`[NanoPro v3] Method 2: invoice_number changed (${lastKnownInvoiceNumber} -> ${liveInvNum}). Resetting and reverifying from start!`);
+                lastKnownInvoiceNumber = liveInvNum;
+                resetState();
+                lastKnownInvoiceNumber = liveInvNum;
+                sidebarMemory.invoiceNumber = liveInvNumObj;
+                multiPageStore.lastInvoiceNumber = liveInvNum;
+                NanoProBadge.setLoading();
+                if (currentMode === 'auto') {
+                    scheduleAutoDetect(10);
+                }
+                return;
+            }
+        }
+        // If liveInvNum is null/invisible: User merely scrolled the sidebar. Retain lastKnownInvoiceNumber, DO NOT reset!
+
+        // ─────────────────────────────────────────────────────────────
+        // METHOD 3: Page Number Tracking for Multi-Page Files
+        // ─────────────────────────────────────────────────────────────
+        const pageInfo = NanoProAutoDetector.detectPageInfo ? NanoProAutoDetector.detectPageInfo() : null;
+        if (pageInfo && (pageInfo.totalPages > 1 || pageInfo.isMultiPage)) {
+            // Only applicable for multi-page documents
+            if (lastObservedPageNum !== null && pageInfo.currentPage !== lastObservedPageNum) {
+                console.log(`[NanoPro v3] Method 3: Multi-page flip detected: P${lastObservedPageNum} -> P${pageInfo.currentPage} of ${pageInfo.totalPages}`);
+                lastObservedPageNum = pageInfo.currentPage;
+                handlePageFlip(pageInfo);
+            } else if (lastObservedPageNum === null) {
+                lastObservedPageNum = pageInfo.currentPage;
+            }
+        }
+    }
+
+    /**
+     * Handle page flip within the same document (page navigation)
+     */
+    function handlePageFlip(newPageInfo) {
+        console.log(`[NanoPro v3] Handling page flip to Page ${newPageInfo.currentPage}...`);
+        sidebarMemory.pageInfo = newPageInfo;
+        lastDetectedStateHash = null;
+        NanoProBadge.setLoading();
+        if (currentMode === 'auto') {
+            clearAutoDetect();
+            // Fast execution: 100ms delay, max 2 retries (300ms max)
+            autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 2), 100);
+            autoPollTimer = setInterval(() => {
+                if (currentMode === 'auto') {
+                    runAutoDetection(0, true);
+                }
+            }, 1000);
+        }
+    }
+
     /**
      * Setup watcher for page navigation (SPA detection)
      */
     function setupNavigationWatcher() {
         // Fallback for native popstate events
-        window.addEventListener('popstate', handleNavigation);
-        window.addEventListener('hashchange', handleNavigation);
+        window.addEventListener('popstate', checkNavigationAndPageFlip);
+        window.addEventListener('hashchange', checkNavigationAndPageFlip);
 
-        // React SPA polling: Check URL hash changes periodically since 
-        // isolated content scripts cannot reliably intercept history.pushState 
-        // without injecting scripts into the main page world.
-        setInterval(() => {
-            const currentHash = window.location.hash;
-            if (currentHash !== initializedForFile && 
-                !(initializedForFile === null && !isSingleFilePage())) {
-                handleNavigation();
+        // Click capture on links, buttons, thumbnails, and pagination elements to detect switches instantly (<20ms)
+        document.addEventListener('click', (e) => {
+            const navEl = e.target.closest('a, button, [role="button"], [role="tab"], [data-testid], input[type="number"], .cursor-pointer, [class*="thumbnail" i], [class*="page" i], [class*="pager" i], [class*="pagination" i]');
+            if (navEl) {
+                setTimeout(checkNavigationAndPageFlip, 20);
+                setTimeout(checkNavigationAndPageFlip, 80);
+                setTimeout(checkNavigationAndPageFlip, 200);
             }
-        }, 500);
+        }, { capture: true, passive: true });
+
+        // Input and change events on page inputs (e.g. typing a page number)
+        document.addEventListener('input', (e) => {
+            if (e.target.matches && e.target.matches('input[type="number"], input[class*="page" i], input[aria-label*="page" i]')) {
+                setTimeout(checkNavigationAndPageFlip, 40);
+            }
+        }, { capture: true, passive: true });
+
+        document.addEventListener('change', (e) => {
+            if (e.target.matches && e.target.matches('input[type="number"], input[class*="page" i], input[aria-label*="page" i]')) {
+                setTimeout(checkNavigationAndPageFlip, 40);
+            }
+        }, { capture: true, passive: true });
+
+        // Fast 100ms polling for URL and DOM page number changes (so page/file change is caught in <100ms)
+        setInterval(checkNavigationAndPageFlip, 100);
     }
 
     /**
@@ -1257,24 +1890,34 @@
         }
 
         // Check if navigation is within the SAME document instance (e.g. flipping pages of same multipage invoice)
-        if (initializedForFile && isSameDocumentInstance(initializedForFile, currentHash)) {
+        const currentLiveInvNum = NanoProAutoDetector.findInvoiceNumber?.()?.value || null;
+        const prevInvNum = multiPageStore.lastInvoiceNumber || sidebarMemory.invoiceNumber?.value || null;
+
+        if (initializedForFile && isSameDocumentInstance(initializedForFile, currentHash, prevInvNum, currentLiveInvNum)) {
             console.log(`[NanoPro v3] Multi-page navigation within same document instance: ${currentHash}`);
             initializedForFile = currentHash;
             // Retain multiPageStore and sidebarMemory! Re-run detection on the new page.
+            sidebarMemory.pageInfo = null; // Clear cached pageInfo so new page is detected!
+            lastDetectedStateHash = null; // Clear hash so it doesn't short-circuit!
+            NanoProBadge.setLoading();
             if (currentMode === 'auto') {
-                scheduleAutoDetect();
+                scheduleAutoDetect(8);
             }
             return;
         }
 
         console.log(`[NanoPro v3] Entered new document instance: ${currentHash}`);
         initializedForFile = currentHash;
+        lastObservedPageNum = null;
+        lastKnownInvoiceNumber = null;
 
         if (isInitialized) {
-            console.log('[NanoPro v3] New document opened, resetting state...');
+            console.log('[NanoPro v3] New document opened, instantly clearing previous state and loading...');
+            // INSTANTLY wipe old document's "Verified" status so it NEVER lingers!
             resetState();
+            NanoProBadge.setLoading();
             if (currentMode === 'auto') {
-                scheduleAutoDetect();
+                scheduleAutoDetect(10);
             }
         } else {
             initialize();
@@ -1288,17 +1931,21 @@
         validationResult = null;
         lastSelection = null;
         lastDetectedStateHash = null;
+        lastObservedPageNum = null;
+        lastKnownInvoiceNumber = null;
         multiPageStore = {
             fileHash: window.location.hash,
             totalPages: 1,
             lastInvoiceAmount: null,
+            lastInvoiceNumber: null,
             pages: {}
         };
         sidebarMemory = {
             instanceHash: window.location.hash,
-            environment: null,
+            environment: lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null,
             tradePartnerName: null,
             invoiceAmount: null,
+            invoiceNumber: null,
             isRentalList: [],
             pageInfo: null
         };
@@ -1307,7 +1954,7 @@
         NanoProPanel.close();
 
         if (currentMode === 'auto') {
-            NanoProBadge.setState('ready');
+            NanoProBadge.setLoading();
         } else {
             NanoProBadge.setReady();
         }
@@ -1336,14 +1983,21 @@
         const itemNoErrors = result.itemNoErrors || [];
         const itemNoWarnings = (result.itemNoWarnings || []).filter(w => w.severity !== 'ERROR');
 
+        const mpErrors = result.multiPageErrors || result.totalValidation;
+        const isMulti = !!(mpErrors && mpErrors.isMultiPage);
+        const pagesWithErrors = mpErrors?.pagesWithErrors || [];
+        const currentPage = mpErrors?.currentPage || 1;
+        const otherPagesWithErrors = pagesWithErrors.filter(p => p !== currentPage);
+
         const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
         const hasTotalNotFound = result.totalValidation && result.totalValidation.status === 'NOT_FOUND';
         const hasTotalMultiple = result.totalValidation && result.totalValidation.status === 'MULTIPLE_INSTANCES';
         const hasTotalPagesMissing = result.totalValidation && result.totalValidation.status === 'PAGES_MISSING';
         const isMultiPagePending = result.totalValidation && result.totalValidation.status === 'MULTI_PAGE_PENDING';
 
-        // Errors: calculation mismatches, sidebar failures, item_no critical errors, multiple totals
-        const totalErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + (hasTotalMultiple ? 1 : 0);
+        // Errors: current page errors (calculation mismatches, sidebar failures, item_no errors, multiple totals) + errors on other scanned pages
+        const currentPageErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + (hasTotalMultiple ? 1 : 0);
+        const totalErrorCount = currentPageErrorCount + (isMulti ? otherPagesWithErrors.length : 0);
 
         // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing, or missing earlier pages
         const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound || hasTotalPagesMissing;
@@ -1363,12 +2017,18 @@
 
             const textEl = badgeEl?.querySelector('.nanopro-badge-text');
             if (textEl) {
-                const errorReasons = [];
-                if (summary?.invalid > 0) errorReasons.push(`${summary.invalid} Calc Error${summary.invalid > 1 ? 's' : ''}`);
-                if (sidebarErrors.length > 0) errorReasons.push(`${sidebarErrors[0].field} Error`);
-                if (itemNoErrors.length > 0) errorReasons.push(`Item_No Error`);
-                if (hasTotalMultiple) errorReasons.push(`Multiple Totals`);
-                textEl.textContent = `❌ ` + errorReasons.join(' | ');
+                if (isMulti && pagesWithErrors.length > 0) {
+                    const pagesStr = pagesWithErrors.map(p => `P${p}`).join(', ');
+                    const errLabel = pagesWithErrors.length > 1 ? 'Errors' : 'Error';
+                    textEl.textContent = `❌ ${pagesStr} ${errLabel}`;
+                } else {
+                    const errorReasons = [];
+                    if (summary?.invalid > 0) errorReasons.push(`${summary.invalid} Calc Error${summary.invalid > 1 ? 's' : ''}`);
+                    if (sidebarErrors.length > 0) errorReasons.push(`${sidebarErrors[0].field} Error`);
+                    if (itemNoErrors.length > 0) errorReasons.push(`Item_No Error`);
+                    if (hasTotalMultiple) errorReasons.push(`Multiple Totals`);
+                    textEl.textContent = `❌ ` + errorReasons.join(' | ');
+                }
             }
         } else if (summary?.incomplete > 0) {
             if (badgeEl) badgeEl.classList.remove('has-caution');
@@ -1378,14 +2038,23 @@
             NanoProBadge.setIncomplete();
 
             let cautionMessages = [];
+            const isAllScannedPendingTotal = hasTotalNotFound && result.totalValidation?.isMultiPage && 
+                (result.totalValidation.recordedPages?.length === result.totalValidation.totalPages);
+
             if (hasTotalPagesMissing) cautionMessages.push(`Missing Pages`);
             if (hasTotalMismatch) cautionMessages.push(result.totalValidation?.isMultiPage ? 'Multi Total Mismatch' : 'Total Mismatch');
-            if (hasTotalNotFound) cautionMessages.push('Missing Total');
+            if (hasTotalNotFound) {
+                cautionMessages.push(isAllScannedPendingTotal ? 'Scroll to Total' : 'Missing Total');
+            }
             if (itemNoWarnings.length > 0) cautionMessages.push(`${itemNoWarnings.length} Item Caution${itemNoWarnings.length > 1 ? 's' : ''}`);
 
             const textEl = badgeEl?.querySelector('.nanopro-badge-text');
             if (textEl) {
-                textEl.textContent = `⚠️ ` + cautionMessages.join(' | ');
+                if (isAllScannedPendingTotal && cautionMessages.length === 1) {
+                    textEl.textContent = `📄 All ${result.totalValidation.totalPages} Scanned | Scroll to Total`;
+                } else {
+                    textEl.textContent = `⚠️ ` + cautionMessages.join(' | ');
+                }
             }
         } else {
             if (badgeEl) badgeEl.classList.remove('has-caution');
@@ -1423,6 +2092,7 @@
         NanoProSelector.cancel();
         clearAutoDetect();
         teardownMutationObserver();
+        teardownInputListeners();
         NanoProOverlay.remove();
         isInitialized = false;
         validationResult = null;
