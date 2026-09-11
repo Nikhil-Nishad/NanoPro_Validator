@@ -32,35 +32,6 @@
     let lastDetectedStateHash = null;
     let initializedForFile = null;
 
-    // Persisted across documents and sessions
-    let lastRememberedEnvironment = null;
-
-    async function loadRememberedEnvironment() {
-        try {
-            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-                const data = await chrome.storage.local.get(['nanopro_last_environment']);
-                if (data && data.nanopro_last_environment) {
-                    lastRememberedEnvironment = data.nanopro_last_environment;
-                    console.log('[NanoPro] Loaded remembered environment from storage:', lastRememberedEnvironment);
-                }
-            }
-        } catch (e) {
-            console.warn('[NanoPro] Error loading remembered environment:', e);
-        }
-    }
-
-    async function saveRememberedEnvironment(env) {
-        if (!env || !env.raw) return;
-        lastRememberedEnvironment = { ...env, isRemembered: true };
-        try {
-            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-                await chrome.storage.local.set({ nanopro_last_environment: lastRememberedEnvironment });
-            }
-        } catch (e) {
-            // Ignore storage errors in isolated context
-        }
-    }
-
     // Multi-page document state store (session scoped per invoice file)
     let multiPageStore = {
         fileHash: null,
@@ -158,7 +129,7 @@
         if (!isSameDocumentInstance(sidebarMemory.instanceHash, currentHash)) {
             sidebarMemory = {
                 instanceHash: currentHash,
-                environment: lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null,
+                environment: null, // Reset per file: each document must be verified independently
                 tradePartnerName: null,
                 invoiceAmount: null,
                 invoiceNumber: null,
@@ -187,12 +158,11 @@
             }
         }
 
-        // 1. Environment
+        // 1. Environment (remembered within this file only)
         if (live.environment && live.environment.raw) {
             const prevVal = sidebarMemory.environment?.raw;
             if (prevVal !== live.environment.raw || sidebarMemory.environment?.isRemembered) {
                 sidebarMemory.environment = { ...live.environment, isRemembered: false };
-                saveRememberedEnvironment(live.environment);
                 hasChanges = true;
             }
         }
@@ -261,8 +231,7 @@
         const isLiveInvNum = !!NanoProAutoDetector.findInvoiceNumber();
 
         const env = sidebarMemory.environment ? 
-            { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : 
-            (lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null);
+            { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : null;
 
         return {
             environment: env,
@@ -456,7 +425,6 @@
 
         // v2: Load saved mode preference
         await loadMode();
-        await loadRememberedEnvironment();
 
         // Inject UI overlay
         NanoProOverlay.inject();
@@ -2062,7 +2030,7 @@
         };
         sidebarMemory = {
             instanceHash: window.location.hash,
-            environment: lastRememberedEnvironment ? { ...lastRememberedEnvironment, isRemembered: true } : null,
+            environment: null, // Reset per file: each document must be verified independently
             tradePartnerName: null,
             invoiceAmount: null,
             invoiceNumber: null,

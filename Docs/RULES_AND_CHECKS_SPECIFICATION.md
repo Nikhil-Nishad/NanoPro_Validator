@@ -95,12 +95,13 @@ To ensure the extension never displays stale data or requires manual page refres
 | **`trade_partner_name`** | Presence of valid trading partner ID | Contains at least 2 alphanumeric characters (e.g. `"INSTANTLRN"`, `"ABC"`) | — | Blank, null, only whitespace, punctuation only (e.g. `---`), or matches label text (`"Trade Partner Name"`) |
 | **`invoice_amount` Multiplicity** | Exactly one invoice total | Exactly 1 `invoice_amount` field in the sidebar | — | Multiple instances detected (`count > 1`) |
 
-### Cross-Document Environment Memory
-- Once a valid `prod` environment is detected on an invoice, it is persisted to `chrome.storage.local`.
-- When switching to a new invoice file where `Environment` has scrolled out of view, the remembered `prod` status is retained with a `(remembered)` indicator.
+### Per-File Environment Isolation & In-File Scrolling Memory
+- **Mandatory Check on Every File:** `Environment: prod` must be checked and confirmed for **all files independently**.
+- **In-File Memory:** Once `Environment: prod` is detected on a file, it is safely remembered within that file instance (even when scrolled out of view or flipping between pages of a multi-page document).
+- **Zero Cross-File Leakage:** When navigating to a new invoice file, **all environment memory is reset to null**. The extension **never carries over `Environment` across different files**. It must freshly verify `Environment: prod` on the new file's sidebar.
 
 ### Virtualized Scrolling Memory
-- When fields scroll out of view and unmount from the DOM, their last confirmed valid states are retained in `sidebarMemory`.
+- When fields scroll out of view and unmount from the DOM within the active document instance, their confirmed valid states are retained in `sidebarMemory`.
 
 ---
 

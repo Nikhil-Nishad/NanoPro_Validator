@@ -877,60 +877,90 @@ function testSidebarScrollingMemory() {
 }
 
 // ============================================================
-// TEST 11: Cross-Document Environment Persistence
+// TEST 11: Per-File Environment Isolation & In-File Memory
 // ============================================================
 function testCrossDocumentEnvironmentMemory() {
-    console.log('Test 11: Cross-document Environment persistence across different invoice files');
+    console.log('Test 11: Per-File Environment Isolation & In-File Memory (NO Cross-Document Leakage)');
 
-    let sessionRememberedEnv = null;
+    let currentFileInstance = null;
+    let fileSidebarMemory = {
+        environment: null
+    };
 
-    function simulateFileLoad(newUrl, liveDomEnv) {
-        // When user opens a new file, if session has remembered environment, seed it
-        let fileEnv = sessionRememberedEnv ? { ...sessionRememberedEnv, isRemembered: true } : null;
-
-        if (liveDomEnv && liveDomEnv.raw) {
-            fileEnv = { ...liveDomEnv, isRemembered: false };
-            sessionRememberedEnv = { ...liveDomEnv }; // Store in session/storage
+    function simulateOpenFile(newFileUrl) {
+        if (currentFileInstance !== newFileUrl) {
+            currentFileInstance = newFileUrl;
+            // Strict reset per file: no memory carried over across different files!
+            fileSidebarMemory.environment = null;
         }
-
-        return fileEnv;
     }
 
-    // Doc 1: Live DOM has Environment: prod
-    const doc1Env = simulateFileLoad(
-        'https://app.nanonets.com/#/review/model1/file1',
-        { raw: 'prod', value: 'prod', selector: 'data-testid' }
-    );
-    assert.ok(doc1Env, 'Doc 1 should have environment');
-    assert.strictEqual(doc1Env.raw, 'prod');
-    assert.strictEqual(doc1Env.isRemembered, false, 'Doc 1 is live from DOM');
+    function scanSidebar(liveDomEnv) {
+        if (liveDomEnv && liveDomEnv.raw) {
+            fileSidebarMemory.environment = { ...liveDomEnv, isRemembered: false };
+        }
+        const isLive = !!(liveDomEnv && liveDomEnv.raw);
+        return fileSidebarMemory.environment ?
+            { ...fileSidebarMemory.environment, isRemembered: !isLive } : null;
+    }
 
-    // Doc 2: New file opened! Environment not yet scrolled into view (null in DOM)
-    const doc2Env = simulateFileLoad(
-        'https://app.nanonets.com/#/review/model1/file2',
-        null
-    );
-    assert.ok(doc2Env, 'Doc 2 must retain remembered environment');
-    assert.strictEqual(doc2Env.raw, 'prod');
-    assert.strictEqual(doc2Env.isRemembered, true, 'Flagged as remembered from previous file in session');
+    // Step 1: File 1 opened -> Live DOM has Environment: prod
+    simulateOpenFile('https://app.nanonets.com/#/review/model1/file1');
+    let env1 = scanSidebar({ raw: 'prod', value: 'prod' });
+    assert.ok(env1, 'File 1 must detect environment');
+    assert.strictEqual(env1.raw, 'prod');
+    assert.strictEqual(env1.isRemembered, false, 'File 1 is live from DOM');
 
-    // Evaluation for Doc 2 should PASS with no "Environment not found" error!
-    const valResult = evaluateSidebarValidation({
-        environment: doc2Env,
+    // Step 2: User scrolls sidebar in File 1 -> Environment unmounts from DOM
+    let env1Scrolled = scanSidebar(null);
+    assert.ok(env1Scrolled, 'File 1 must retain environment in memory within the same file');
+    assert.strictEqual(env1Scrolled.raw, 'prod');
+    assert.strictEqual(env1Scrolled.isRemembered, true, 'Flagged as remembered within File 1');
+
+    // Step 3: User switches to File 2 (a NEW invoice file)
+    simulateOpenFile('https://app.nanonets.com/#/review/model1/file2');
+    let env2BeforeScan = scanSidebar(null); // Not yet seen in File 2's DOM
+    assert.strictEqual(env2BeforeScan, null, 'File 2 MUST NOT inherit Environment from File 1!');
+
+    // Evaluation for File 2 before Environment is seen -> MUST FAIL with ERROR!
+    const valResultFile2Missing = evaluateSidebarValidation({
+        environment: env2BeforeScan,
         isRental: [{ raw: 'False', value: 'False' }],
         tradePartnerName: { raw: 'Partner X', value: 'Partner X' },
         invoiceAmount: { raw: '50.00', value: 50.00, count: 1, multiple: false },
         pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
     });
-    assert.strictEqual(valResult.environment.status, 'VALID');
-    assert.strictEqual(valResult.errors.length, 0, 'Validation passes without environment error');
+    assert.strictEqual(valResultFile2Missing.environment.status, 'ERROR', 'File 2 must error because Environment is not yet seen on this file');
+    assert.strictEqual(valResultFile2Missing.isValid, false, 'Document is not valid until Environment is verified on this file');
 
-    // Doc 3: User scrolls into view on Doc 2 and live element is detected
-    const doc2ScrolledEnv = simulateFileLoad(
-        'https://app.nanonets.com/#/review/model1/file2',
-        { raw: 'prod', value: 'prod', selector: 'label-scan' }
-    );
-    assert.strictEqual(doc2ScrolledEnv.isRemembered, false, 'Becomes live when detected in DOM');
+    // Step 4: File 2 sidebar displays Environment: prod
+    let env2Live = scanSidebar({ raw: 'prod', value: 'prod' });
+    assert.ok(env2Live, 'File 2 now has environment');
+    assert.strictEqual(env2Live.raw, 'prod');
+    assert.strictEqual(env2Live.isRemembered, false);
+
+    const valResultFile2Pass = evaluateSidebarValidation({
+        environment: env2Live,
+        isRental: [{ raw: 'False', value: 'False' }],
+        tradePartnerName: { raw: 'Partner X', value: 'Partner X' },
+        invoiceAmount: { raw: '50.00', value: 50.00, count: 1, multiple: false },
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(valResultFile2Pass.environment.status, 'VALID', 'File 2 now passes with its own verified Environment');
+    assert.strictEqual(valResultFile2Pass.isValid, true);
+
+    // Step 5: File 3 has Environment: dev / test
+    simulateOpenFile('https://app.nanonets.com/#/review/model1/file3');
+    let env3Live = scanSidebar({ raw: 'dev', value: 'dev' });
+    const valResultFile3Fail = evaluateSidebarValidation({
+        environment: env3Live,
+        isRental: [{ raw: 'False', value: 'False' }],
+        tradePartnerName: { raw: 'Partner X', value: 'Partner X' },
+        invoiceAmount: { raw: '50.00', value: 50.00, count: 1, multiple: false },
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(valResultFile3Fail.environment.status, 'ERROR', 'Non-prod environment must be rejected');
+    assert.strictEqual(valResultFile3Fail.isValid, false);
 
     console.log('  Passed ✅');
 }

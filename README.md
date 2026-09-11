@@ -52,7 +52,7 @@
 
 ### 📦 Key Foundations from Version 3.0 & 2.0
 - **Cumulative Multi-Page Line Item Total**: Sums line items across all pages and validates against the final `invoice_amount` on the last page.
-- **Strict Sidebar Fields**: `Environment === "prod"`, `is_rental` consistency (`all True` or `all False`), and `trade_partner_name` with $\ge 2$ characters.
+- **Strict Sidebar Fields**: `Environment === "prod"` (strictly verified independently per file, remembered only within that file during scrolling/paging), `is_rental` consistency (`all True` or `all False`), and `trade_partner_name` with $\ge 2$ characters.
 - **Rental Cross-Validation**: `Item_No` cannot be only `"-R"`; `-R` suffix required on rentals (⚠️ Caution if missing) and forbidden on non-rentals (❌ Error if present).
 - **Dual Mode UI**: Auto detection with visual snip manual mode fallback.
 - **Zero-Purple Design System**: Clean slate, emerald, coral, amber, and sky blue tokens rendered inside an isolated Shadow DOM.
