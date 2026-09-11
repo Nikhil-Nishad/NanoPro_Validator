@@ -443,10 +443,16 @@
         console.log('[NanoPro v2] Initializing validator extension...');
 
         if (!isNanonetsPage()) {
-            console.log('[NanoPro] Not a Nanonets page, skipping initialization');
+            console.log('[NanoPro] Not an app.nanonets.com page, skipping initialization');
             return;
         }
 
+        if (!isSingleFilePage()) {
+            console.log('[NanoPro v3] No file is currently opened (file list or dashboard view), skipping initialization');
+            return;
+        }
+
+        console.log('[NanoPro v2] Initializing validator extension on opened file...');
 
         // v2: Load saved mode preference
         await loadMode();
@@ -497,18 +503,83 @@
     }
 
     /**
-     * Check if current page is a Nanonets page
+     * Check if current page is app.nanonets.com alone
      */
-    function isNanonetsPage() {
-        return window.location.href.includes('nanonets.com');
+    function isNanonetsPage(customUrl = null) {
+        if (customUrl) {
+            try {
+                const u = new URL(customUrl);
+                return u.hostname === 'app.nanonets.com' || u.origin === 'https://app.nanonets.com';
+            } catch (e) {
+                return false;
+            }
+        }
+        if (typeof window === 'undefined') return true;
+        return window.location.hostname === 'app.nanonets.com' || window.location.origin === 'https://app.nanonets.com';
     }
 
     /**
-     * Check if current page is a single file page
+     * Non-file route segments inside a model (e.g. tabs, settings, or dashboard views)
      */
-    function isSingleFilePage() {
-        const hash = window.location.hash;
-        return /^#\/(?:ocr|review|workflow|models)(?:\/test)?\/[^/]+\/[^/?]+/i.test(hash);
+    const NON_FILE_ROUTES = /^(files|settings|train|extract|metrics|integrations|rules|activity|export|upload|analytics|logs)$/i;
+
+    /**
+     * Check if current page is a page where a file is opened
+     * e.g.
+     * File opened: https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/da419de4-a638-11f1-9b22-ba4a9f43fef7?rowsPerPage=
+     * File list (NOT opened): https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39?rowsPerPage
+     */
+    function isSingleFilePage(customUrl = null) {
+        if (!isNanonetsPage(customUrl)) return false;
+
+        let hash = '';
+        let pathname = '';
+
+        if (customUrl) {
+            try {
+                const u = new URL(customUrl);
+                hash = u.hash || '';
+                pathname = u.pathname || '';
+            } catch (e) {
+                hash = customUrl;
+            }
+        } else if (typeof window !== 'undefined') {
+            hash = window.location.hash || '';
+            pathname = window.location.pathname || '';
+        }
+
+        const rawTarget = hash.startsWith('#') ? hash.slice(1) : (pathname || '');
+        const target = rawTarget.split('?')[0].split('#')[0];
+        const segments = target.split('/').filter(Boolean);
+
+        if (segments.length < 2) return false;
+
+        const rootSection = segments[0].toLowerCase();
+        if (!['ocr', 'review', 'workflow', 'models'].includes(rootSection)) {
+            return false;
+        }
+
+        let modelIndex = 1;
+        if (segments[1] && segments[1].toLowerCase() === 'test') {
+            modelIndex = 2;
+        }
+
+        // For an opened file, both modelId and fileId segments must exist:
+        // segments[modelIndex] is modelId
+        // segments[modelIndex + 1] is fileId
+        if (segments.length <= modelIndex + 1) {
+            return false; // Only modelId is present (file list view)
+        }
+
+        const modelId = segments[modelIndex];
+        const fileId = segments[modelIndex + 1];
+
+        if (!modelId || !fileId) return false;
+
+        // Ensure fileId is not a sub-tab/settings route
+        if (NON_FILE_ROUTES.test(fileId)) return false;
+
+        return true;
     }
 
 
@@ -1781,8 +1852,35 @@
      * Method 3: Keep tracking the page number for multi-page documents. If single-page file, not applicable.
      */
     function checkNavigationAndPageFlip() {
+        if (!isNanonetsPage()) {
+            if (isInitialized) cleanup();
+            return;
+        }
+
         const currentHref = window.location.href;
         const currentHash = window.location.hash;
+
+        // If not on an opened file page (e.g. file list, dashboard, settings):
+        if (!isSingleFilePage()) {
+            if (isInitialized) {
+                console.log('[NanoPro v3] Navigated away from opened file (now on file list), removing overlay...');
+                cleanup();
+                initializedForFile = null;
+                lastObservedHref = currentHref;
+                lastObservedPageNum = null;
+                lastKnownInvoiceNumber = null;
+            }
+            lastObservedHref = currentHref;
+            return;
+        }
+
+        // If on an opened file page, but not initialized yet:
+        if (!isInitialized) {
+            console.log('[NanoPro v3] Opened file detected, initializing extension...');
+            lastObservedHref = currentHref;
+            handleNavigation();
+            return;
+        }
 
         // ─────────────────────────────────────────────────────────────
         // METHOD 1: URL Tracking
@@ -1793,8 +1891,6 @@
             handleNavigation();
             return;
         }
-
-        if (!isSingleFilePage()) return;
 
         // ─────────────────────────────────────────────────────────────
         // METHOD 2: Sidebar invoice_number Tracking

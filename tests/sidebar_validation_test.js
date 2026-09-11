@@ -2043,6 +2043,113 @@ function testPeriodicTableRecheckEvery1to2Seconds() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 24: Single File Page Activation vs File List Suppression (app.nanonets.com alone)
+// ============================================================
+function testSingleFilePageActivationVsFileListSuppression() {
+    console.log('Test 24: Single File Page Activation vs File List Suppression (app.nanonets.com alone)');
+
+    const NON_FILE_ROUTES = /^(files|settings|train|extract|metrics|integrations|rules|activity|export|upload|analytics|logs)$/i;
+
+    function isAppNanonets(urlStr) {
+        try {
+            const u = new URL(urlStr);
+            return u.hostname === 'app.nanonets.com';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function checkIsSingleFilePage(urlStr) {
+        if (!isAppNanonets(urlStr)) return false;
+
+        const u = new URL(urlStr);
+        const rawTarget = u.hash.startsWith('#') ? u.hash.slice(1) : (u.pathname || '');
+        const target = rawTarget.split('?')[0].split('#')[0];
+        const segments = target.split('/').filter(Boolean);
+
+        if (segments.length < 2) return false;
+
+        const rootSection = segments[0].toLowerCase();
+        if (!['ocr', 'review', 'workflow', 'models'].includes(rootSection)) {
+            return false;
+        }
+
+        let modelIndex = 1;
+        if (segments[1] && segments[1].toLowerCase() === 'test') {
+            modelIndex = 2;
+        }
+
+        if (segments.length <= modelIndex + 1) {
+            return false;
+        }
+
+        const modelId = segments[modelIndex];
+        const fileId = segments[modelIndex + 1];
+
+        if (!modelId || !fileId) return false;
+        if (NON_FILE_ROUTES.test(fileId)) return false;
+
+        return true;
+    }
+
+    // 1. User sample URL when a file IS opened
+    const openedFileUrl = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/da419de4-a638-11f1-9b22-ba4a9f43fef7?rowsPerPage=';
+    assert.strictEqual(checkIsSingleFilePage(openedFileUrl), true, 'Sample opened file URL must return true');
+
+    // 2. User sample URL when file list is visible but file is NOT opened
+    const fileListUrl = 'https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39?rowsPerPage';
+    assert.strictEqual(checkIsSingleFilePage(fileListUrl), false, 'Sample file list URL must return false');
+
+    // 3. Sub-tabs / settings inside model view
+    assert.strictEqual(checkIsSingleFilePage('https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/settings'), false);
+    assert.strictEqual(checkIsSingleFilePage('https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/train'), false);
+    assert.strictEqual(checkIsSingleFilePage('https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/files'), false);
+
+    // 4. Must run in app.nanonets.com alone (not generic nanonets.com or other domains)
+    assert.strictEqual(checkIsSingleFilePage('https://nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/da419de4-a638-11f1-9b22-ba4a9f43fef7'), false);
+    assert.strictEqual(checkIsSingleFilePage('https://www.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/da419de4-a638-11f1-9b22-ba4a9f43fef7'), false);
+    assert.strictEqual(checkIsSingleFilePage('https://example.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/da419de4-a638-11f1-9b22-ba4a9f43fef7'), false);
+
+    // 5. Lifecycle simulation: navigation from file list -> opened file -> back to file list
+    let isInitialized = false;
+    let overlayInjected = false;
+
+    function simulateNavigation(targetUrl) {
+        if (!checkIsSingleFilePage(targetUrl)) {
+            if (isInitialized) {
+                // cleanup
+                isInitialized = false;
+                overlayInjected = false;
+            }
+            return { active: false, overlay: overlayInjected };
+        }
+
+        if (!isInitialized) {
+            isInitialized = true;
+            overlayInjected = true;
+        }
+        return { active: true, overlay: overlayInjected };
+    }
+
+    // Step A: User starts on file list page
+    let stateA = simulateNavigation(fileListUrl);
+    assert.strictEqual(stateA.active, false, 'Extension must not be active on file list');
+    assert.strictEqual(stateA.overlay, false, 'Overlay must not be injected on file list');
+
+    // Step B: User clicks file and opens it
+    let stateB = simulateNavigation(openedFileUrl);
+    assert.strictEqual(stateB.active, true, 'Extension must activate when file is opened');
+    assert.strictEqual(stateB.overlay, true, 'Overlay must be injected when file is opened');
+
+    // Step C: User clicks back to file list
+    let stateC = simulateNavigation(fileListUrl);
+    assert.strictEqual(stateC.active, false, 'Extension must deactivate when returning to file list');
+    assert.strictEqual(stateC.overlay, false, 'Overlay must be cleanly removed on file list');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -2058,8 +2165,9 @@ testThreeNavigationTrackingMethods();
 testPanelRenderSafeWithEmptyValidRows();
 testSidePanelScrollThreshold();
 testPeriodicTableRecheckEvery1to2Seconds();
+testSingleFilePageActivationVsFileListSuppression();
 
-console.log('--- ALL 23 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 24 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 

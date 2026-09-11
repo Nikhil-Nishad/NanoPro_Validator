@@ -9,8 +9,7 @@
     "storage"
   ],
   "host_permissions": [
-    "*://*.nanonets.com/*",
-    "*://app.nanonets.com/*"
+    "https://app.nanonets.com/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -18,7 +17,6 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.nanonets.com/*",
         "https://app.nanonets.com/*"
       ],
       "js": [
