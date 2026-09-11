@@ -107,13 +107,16 @@ const NanoProPanel = (function () {
 
       const { summary, results, invalidRows, validRows } = validationResult;
 
-      // Analyze patterns for suggestions
-      const validRowData = validRows.map(r => ({
+      // Analyze patterns for suggestions (safely handle undefined validRows)
+      const validRowsList = validRows || [];
+      const validRowData = validRowsList.map(r => ({
         qty: r.qty,
         price: r.price,
         amount: r.actual
       }));
-      NanoProSuggester.analyzePatterns(validRowData);
+      if (validRowData.length > 0) {
+        NanoProSuggester.analyzePatterns(validRowData);
+      }
 
       // Render ALL rows in order
       let html = `
@@ -124,9 +127,34 @@ const NanoProPanel = (function () {
         </div>
       `;
 
+      // If this page has no table (e.g. cover page, terms, signature, delivery slip), show an informative card
+      if (validationResult.hasNoTable || (summary.total === 0 && results.length === 0)) {
+        const pageNum = validationResult.totalValidation?.currentPage || '';
+        html += `
+          <div class="nanopro-empty-page" style="padding: 14px; margin: 10px 0; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; text-align: center;">
+            <div style="font-size: 20px; margin-bottom: 4px;">📄</div>
+            <div style="font-weight: 600; color: #1e293b; font-size: 13px;">Page ${pageNum ? pageNum : ''}: No Line Items Table</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">This page does not contain itemized table rows (cover/terms/totals page). $0.00 added to cumulative invoice total.</div>
+          </div>
+        `;
+      }
+
       // Render sidebar field validations
       if (validationResult.sidebarValidation) {
         html += this.renderSidebarValidation(validationResult.sidebarValidation);
+      }
+
+      // Render multi-page status tracker (if multi-page document)
+      if (validationResult.multiPageErrors?.isMultiPage || validationResult.totalValidation?.isMultiPage) {
+        const mpData = validationResult.multiPageErrors || {
+          isMultiPage: true,
+          currentPage: validationResult.totalValidation?.currentPage,
+          totalPages: validationResult.totalValidation?.totalPages,
+          pagesWithErrors: validationResult.totalValidation?.pagesWithErrors || [],
+          pagesWithCautions: validationResult.totalValidation?.pagesWithCautions || [],
+          pageStatusList: validationResult.totalValidation?.pageStatusList || []
+        };
+        html += this.renderMultiPageStatus(mpData);
       }
 
       // Item_No caution summary
@@ -481,6 +509,86 @@ const NanoProPanel = (function () {
             ${!isMatch ? `<span class="nanopro-total-sep">|</span><span class="nanopro-total-diff">Diff: ${diffFormatted}</span>` : ''}
           </div>
           ${breakdownItems ? `<div style="margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap;">${breakdownItems}</div>` : ''}
+        </div>
+      `;
+    }
+
+    /**
+     * Render multi-page document status tracker
+     */
+    renderMultiPageStatus(multiPage) {
+      if (!multiPage || !multiPage.isMultiPage) return '';
+
+      const currentPage = multiPage.currentPage || 1;
+      const totalPages = multiPage.totalPages || 1;
+      const pagesWithErrors = multiPage.pagesWithErrors || [];
+      const pagesWithCautions = multiPage.pagesWithCautions || [];
+      const pageStatusList = multiPage.pageStatusList || [];
+
+      const recordedMap = {};
+      pageStatusList.forEach(p => { recordedMap[p.page] = p; });
+
+      let cardsHtml = '';
+      for (let p = 1; p <= totalPages; p++) {
+        const pData = recordedMap[p];
+        const isCurrent = p === currentPage;
+        let badgeClass = 'nanopro-page-unscanned';
+        let icon = '⚪';
+        let statusText = 'Not Scanned';
+        let detailText = 'Navigate to scan';
+
+        if (pData) {
+          if (pData.status === 'INVALID' || (pData.calcErrors > 0 || pData.itemNoErrors > 0)) {
+            badgeClass = 'nanopro-page-error';
+            icon = '❌';
+            statusText = pData.errorSummary || 'Error';
+            detailText = `$${NanoProParser.formatNumber(pData.sumAmount)} (${pData.rowCount || pData.totalRows || 0} items)`;
+          } else if (pData.status === 'CAUTION' || pData.itemNoWarnings > 0) {
+            badgeClass = 'nanopro-page-caution';
+            icon = '⚠️';
+            statusText = pData.errorSummary || 'Caution';
+            detailText = `$${NanoProParser.formatNumber(pData.sumAmount)} (${pData.rowCount || pData.totalRows || 0} items)`;
+          } else if (pData.hasNoTable) {
+            badgeClass = 'nanopro-page-valid';
+            icon = '✓';
+            statusText = 'No Table';
+            detailText = 'No table (0 items)';
+          } else {
+            badgeClass = 'nanopro-page-valid';
+            icon = '✓';
+            statusText = 'Valid';
+            detailText = `$${NanoProParser.formatNumber(pData.sumAmount)} (${pData.rowCount || pData.totalRows || 0} items)`;
+          }
+        }
+
+        cardsHtml += `
+          <div class="nanopro-page-card ${badgeClass} ${isCurrent ? 'is-current-page' : ''}">
+            <div class="nanopro-page-card-header">
+              <span class="nanopro-page-card-title">${icon} Page ${p} ${isCurrent ? '<span class="nanopro-curr-tag">(Current)</span>' : ''}</span>
+              <span class="nanopro-page-status-pill">${statusText}</span>
+            </div>
+            <div class="nanopro-page-card-detail">${detailText}</div>
+          </div>
+        `;
+      }
+
+      const hasAnyError = pagesWithErrors.length > 0;
+      const scannedCount = Object.keys(recordedMap).length;
+      const errorHeader = hasAnyError
+        ? `<span class="nanopro-pill nanopro-pill-error">${pagesWithErrors.length} Page${pagesWithErrors.length > 1 ? 's' : ''} with Errors: [${pagesWithErrors.map(p => `P${p}`).join(', ')}]</span>`
+        : (scannedCount === totalPages 
+            ? `<span class="nanopro-pill nanopro-pill-valid">All ${totalPages} Pages Clean</span>`
+            : `<span class="nanopro-pill nanopro-pill-info">${scannedCount} of ${totalPages} Pages Scanned</span>`);
+
+      return `
+        <div class="nanopro-multipage-tracker">
+          <div class="nanopro-multipage-header">
+            <span class="nanopro-multipage-title">📑 Page Status (${scannedCount}/${totalPages} Scanned)</span>
+            ${errorHeader}
+          </div>
+          <div class="nanopro-multipage-grid">
+            ${cardsHtml}
+          </div>
         </div>
       `;
     }

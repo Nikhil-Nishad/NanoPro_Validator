@@ -25,11 +25,14 @@ const NanoProAutoDetector = (function () {
 
     const PRIMARY_SELECTOR = '#root > div.flex.h-screen > div.relative.h-full.grow.overflow-auto > div > div > div.grow.overflow-auto > div > div > div > div.shrink-0 > div.relative.overflow-hidden > div';
 
+    // Explicitly excluded table headers that must never be matched as calculation columns
+    const EXCLUDED_HEADERS = /^(cyl_returned|cyl_shipped|computations|unit_of_measure|description|item_no_2|qty_ordered)$/i;
+
     const HEADER_PATTERNS = {
-        qty: /^(qty|qty_ordered|quantity|line_item_quantity|units|count)$/i,
-        price: /^(item_price|unit_price|price|rate|line_item_unit_price|unit_cost)$/i,
-        amount: /^(line_amount|amount|total|line_total|line_item_amount|net_amount|item_amount)$/i,
-        item_no: /^(item_no|item_no_2|item_number|part_no|part_number|sku|product_id|product_code)$/i,
+        qty: /^(qty|quantity|units|count)$/i,
+        price: /^(item_price|unit_price|price|rate|unit_cost)$/i,
+        amount: /^(line_amount|amount|total|line_total|net_amount|item_amount)$/i,
+        item_no: /^(item_no|item_number|part_no|sku)$/i,
     };
 
     // ═══════════════════════════════════════════════════════
@@ -251,8 +254,23 @@ const NanoProAutoDetector = (function () {
 
     function mapHeaders(headers) {
         const mapping = { qty: null, price: null, amount: null, item_no: null };
+
+        // Pass 1: Look for exact preferred header matches (e.g. "Qty", "Item_Price", "Line_Amount", "Item_No")
         for (const header of headers) {
             const norm = header.name.toLowerCase().replace(/[\s-]+/g, '_').trim();
+            if (EXCLUDED_HEADERS.test(norm)) continue;
+
+            if (!mapping.qty && norm === 'qty') mapping.qty = header;
+            if (!mapping.price && norm === 'item_price') mapping.price = header;
+            if (!mapping.amount && norm === 'line_amount') mapping.amount = header;
+            if (!mapping.item_no && norm === 'item_no') mapping.item_no = header;
+        }
+
+        // Pass 2: Secondary patterns if primary not matched, strictly excluding non-target columns
+        for (const header of headers) {
+            const norm = header.name.toLowerCase().replace(/[\s-]+/g, '_').trim();
+            if (EXCLUDED_HEADERS.test(norm)) continue;
+
             for (const [type, pattern] of Object.entries(HEADER_PATTERNS)) {
                 if (mapping[type]) continue;
                 if (pattern.test(norm) || pattern.test(header.name.toLowerCase())) {
@@ -270,24 +288,118 @@ const NanoProAutoDetector = (function () {
         const headerY = Math.max(...headers.map(h => h.rect.bottom), 0);
         console.log('[NanoPro AutoDetector] Header bottom Y:', headerY);
 
-        // Log ALL header X positions (not just mapped ones)
         for (const hdr of headers) {
             const mapped = Object.entries(columnMapping).find(([k, v]) => v && v.name === hdr.name);
             console.log(`[NanoPro AutoDetector] Header "${hdr.name}" centerX: ${Math.round(hdr.centerX)} ${mapped ? '→ ' + mapped[0] : '(unmapped)'}`);
         }
 
-        // Collect ALL data inputs
-        const allInputs = container.querySelectorAll('input');
-        const dataInputs = [];
+        // Helper to match an input to the closest header among ALL headers in the table.
+        // This ensures non-mapped columns like Cyl_Returned, Cyl_Shipped, Description, Qty_Ordered
+        // are identified as themselves and NEVER wrongly assigned to Item_Price or Qty!
+        function getHeaderForInput(inputCenterX) {
+            // First pass: Direct span match
+            for (const hdr of headers) {
+                if (hdr.rect && typeof hdr.rect.left === 'number' && typeof hdr.rect.right === 'number') {
+                    if (inputCenterX >= (hdr.rect.left - 4) && inputCenterX <= (hdr.rect.right + 4)) {
+                        return hdr;
+                    }
+                }
+            }
+            // Second pass: Closest header by center X
+            let closestHdr = null;
+            let closestDist = Infinity;
+            for (const hdr of headers) {
+                const dist = Math.abs(inputCenterX - hdr.centerX);
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestHdr = hdr;
+                }
+            }
+            return closestHdr;
+        }
 
-        for (const input of allInputs) {
+        function assignCell(row, matchedHdr, val) {
+            if (!matchedHdr) return;
+            if (columnMapping.qty && matchedHdr.name === columnMapping.qty.name) {
+                row.qty = val;
+            } else if (columnMapping.price && matchedHdr.name === columnMapping.price.name) {
+                row.price = val;
+            } else if (columnMapping.amount && matchedHdr.name === columnMapping.amount.name) {
+                row.amount = val;
+            } else if (columnMapping.item_no && matchedHdr.name === columnMapping.item_no.name) {
+                row.item_no = val;
+            }
+        }
+
+        // Strategy A: Row containers via data-rbd-draggable-id (Nanonets line items)
+        let rowContainers = Array.from(container.querySelectorAll('[data-rbd-draggable-id]'));
+        if (!rowContainers.length && container !== document.body) {
+            rowContainers = Array.from(document.querySelectorAll('[data-rbd-draggable-id]'));
+        }
+
+        if (rowContainers.length > 0) {
+            console.log(`[NanoPro AutoDetector] Strategy A: Found ${rowContainers.length} [data-rbd-draggable-id] row containers`);
+
+            // Sort row containers by numeric ID or DOM order/translateY
+            rowContainers.sort((a, b) => {
+                const idA = parseInt(a.getAttribute('data-rbd-draggable-id'), 10);
+                const idB = parseInt(b.getAttribute('data-rbd-draggable-id'), 10);
+                if (!isNaN(idA) && !isNaN(idB)) return idA - idB;
+                const rectA = a.getBoundingClientRect();
+                const rectB = b.getBoundingClientRect();
+                return rectA.top - rectB.top;
+            });
+
+            const rows = [];
+            for (let i = 0; i < rowContainers.length; i++) {
+                const rowEl = rowContainers[i];
+                const inputs = Array.from(rowEl.querySelectorAll('input'));
+                const row = { qty: null, price: null, amount: null, item_no: null };
+
+                for (const input of inputs) {
+                    if (input.classList.contains('MuiAutocomplete-input')) continue;
+                    if (input.placeholder === 'Select a column label') continue;
+                    const inputType = (input.type || 'text').toLowerCase();
+                    if (inputType !== 'text' && inputType !== '' && inputType !== 'search' && inputType !== 'number') continue;
+
+                    const rect = input.getBoundingClientRect();
+                    const centerX = rect.width > 0 ? (rect.left + rect.width / 2) : 0;
+                    const matchedHdr = getHeaderForInput(centerX);
+
+                    if (matchedHdr) {
+                        const val = (input.value !== undefined && input.value !== null) ? input.value.trim() : '';
+                        assignCell(row, matchedHdr, val);
+                    }
+                }
+
+                // If row has any data or is identified, retain it
+                const hasAnyData = row.qty !== null || row.price !== null || row.amount !== null || row.item_no !== null;
+                if (hasAnyData) {
+                    console.log(`[NanoPro AutoDetector] Row ${i + 1} (rbd):`, row);
+                    rows.push(row);
+                }
+            }
+
+            if (rows.length > 0) {
+                return rows;
+            }
+        }
+
+        // Strategy B: Y-coordinate clustering across data inputs (for virtualized or non-rbd tables)
+        const allCandidateInputs = Array.from(
+            (container.querySelectorAll('input').length ? container : document).querySelectorAll('input')
+        );
+
+        const dataInputs = [];
+        for (const input of allCandidateInputs) {
             if (input.classList.contains('MuiAutocomplete-input')) continue;
             if (input.placeholder === 'Select a column label') continue;
             const inputType = (input.type || 'text').toLowerCase();
-            if (inputType !== 'text' && inputType !== '' && inputType !== 'search') continue;
+            if (inputType !== 'text' && inputType !== '' && inputType !== 'search' && inputType !== 'number') continue;
 
             const rect = input.getBoundingClientRect();
-            if (rect.top < headerY - 5 || rect.width <= 0 || rect.height <= 0) continue;
+            if (rect.height <= 0 || rect.width <= 0) continue;
+            if (headerY > 0 && rect.bottom <= headerY) continue;
 
             dataInputs.push({
                 text: (input.value || '').trim(),
@@ -297,89 +409,51 @@ const NanoProAutoDetector = (function () {
             });
         }
 
-        // Fallback: document-wide
-        if (!dataInputs.length && container !== document.body) {
-            console.log('[NanoPro AutoDetector] No data inputs in container, trying document-wide');
-            for (const input of document.querySelectorAll('input')) {
-                if (input.classList.contains('MuiAutocomplete-input')) continue;
-                if (input.placeholder === 'Select a column label') continue;
-                const inputType = (input.type || 'text').toLowerCase();
-                if (inputType !== 'text' && inputType !== '' && inputType !== 'search') continue;
-                const rect = input.getBoundingClientRect();
-                if (rect.top < headerY - 5 || rect.width <= 0 || rect.height <= 0) continue;
-                dataInputs.push({
-                    text: (input.value || '').trim(),
-                    centerX: rect.left + rect.width / 2,
-                    centerY: rect.top + rect.height / 2,
-                    rect
+        console.log(`[NanoPro AutoDetector] Strategy B: Found ${dataInputs.length} data inputs for clustering`);
+        if (!dataInputs.length) return [];
+
+        // Cluster inputs by vertical Y position (tolerance +/- 14px)
+        dataInputs.sort((a, b) => a.centerY - b.centerY);
+
+        const rowClusters = [];
+        for (const item of dataInputs) {
+            let placed = false;
+            for (const cluster of rowClusters) {
+                const avgY = cluster.totalY / cluster.items.length;
+                if (Math.abs(item.centerY - avgY) <= 14) {
+                    cluster.items.push(item);
+                    cluster.totalY += item.centerY;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                rowClusters.push({
+                    items: [item],
+                    totalY: item.centerY
                 });
             }
         }
 
-        console.log(`[NanoPro AutoDetector] Data inputs found: ${dataInputs.length}`);
-        if (!dataInputs.length) return [];
-
-        // ═══ COLUMN-FIRST APPROACH ═══
-        // Instead of grouping by Y (fragile with many columns),
-        // assign each input to its closest header column, then zip by row index.
-
-        // Step 1: Assign each data input to its closest header (by X distance)
-        const columnBuckets = {};
-        for (const hdr of headers) {
-            columnBuckets[hdr.name] = [];
-        }
-
-        for (const input of dataInputs) {
-            let closestHeader = null, closestDist = Infinity;
-            for (const hdr of headers) {
-                const dist = Math.abs(input.centerX - hdr.centerX);
-                if (dist < closestDist) {
-                    closestDist = dist;
-                    closestHeader = hdr;
-                }
-            }
-            if (closestHeader && closestDist < 1500) {
-                columnBuckets[closestHeader.name].push(input);
-            }
-        }
-
-        // Step 2: Sort each column bucket by Y (top to bottom = row order)
-        for (const name of Object.keys(columnBuckets)) {
-            columnBuckets[name].sort((a, b) => a.centerY - b.centerY);
-        }
-
-        // Log column assignments
-        for (const [name, bucket] of Object.entries(columnBuckets)) {
-            console.log(`[NanoPro AutoDetector] Column "${name}": ${bucket.length} cells`, bucket.map(c => `"${c.text}"`));
-        }
-
-        // Step 3: Determine row count from the mapped columns we care about
-        const mappedColumns = {};
-        for (const [type, hdr] of Object.entries(columnMapping)) {
-            if (hdr && columnBuckets[hdr.name]) {
-                mappedColumns[type] = columnBuckets[hdr.name];
-            }
-        }
-
-        const rowCount = Math.max(...Object.values(mappedColumns).map(c => c.length), 0);
-        if (rowCount === 0) {
-            console.log('[NanoPro AutoDetector] No data cells in mapped columns');
-            return [];
-        }
-
-        // Step 4: Build rows by zipping column data at each row index
+        // Build rows from clusters
         const rows = [];
-        for (let i = 0; i < rowCount; i++) {
+        for (let i = 0; i < rowClusters.length; i++) {
+            const cluster = rowClusters[i];
             const row = { qty: null, price: null, amount: null, item_no: null };
 
-            for (const [type, cells] of Object.entries(mappedColumns)) {
-                if (cells[i]) {
-                    row[type] = cells[i].text !== undefined && cells[i].text !== null ? cells[i].text : '';
+            for (const item of cluster.items) {
+                const matchedHdr = getHeaderForInput(item.centerX);
+                if (matchedHdr) {
+                    const val = item.text !== undefined && item.text !== null ? item.text : '';
+                    assignCell(row, matchedHdr, val);
                 }
             }
 
-            console.log(`[NanoPro AutoDetector] Row ${i + 1}:`, row);
-            if (row.qty || row.price || row.amount) rows.push(row);
+            const hasAnyData = row.qty !== null || row.price !== null || row.amount !== null || row.item_no !== null;
+            if (hasAnyData && (row.qty || row.price || row.amount || row.item_no)) {
+                console.log(`[NanoPro AutoDetector] Row ${i + 1} (cluster):`, row);
+                rows.push(row);
+            }
         }
 
         return rows;
@@ -463,14 +537,45 @@ const NanoProAutoDetector = (function () {
 
     /**
      * Extract text or input value from a container element
+     * If labelToExclude is passed, avoids picking up the label itself
      */
-    function extractElementValue(el) {
+    function extractElementValue(el, labelToExclude = null) {
         if (!el) return '';
         const input = el.querySelector('input, textarea');
         if (input) return (input.value || '').trim();
-        const span = el.querySelector('span');
-        if (span) return (span.textContent || '').trim();
-        return (el.textContent || '').trim();
+
+        // Priority 1: .ocr_text or specific OCR element
+        const ocr = el.classList?.contains('ocr_text') ? el : el.querySelector('.ocr_text');
+        if (ocr) {
+            const ocrVal = (ocr.textContent || '').trim();
+            if (ocrVal) return ocrVal;
+        }
+
+        // Priority 2: [data-testid*="label_box_div"] or [data-testid*="ocr"]
+        const testIdBox = el.querySelector('[data-testid*="label_box_div"], [data-testid*="ocr"]');
+        if (testIdBox && testIdBox !== el) {
+            const boxVal = (testIdBox.textContent || '').trim();
+            if (boxVal) return boxVal;
+        }
+
+        // Priority 3: spans, excluding any span that is just the label
+        const normLabel = labelToExclude ? labelToExclude.toLowerCase().replace(/[\s_-]+/g, '') : null;
+        const spans = el.querySelectorAll('span');
+        for (const span of spans) {
+            const text = (span.textContent || '').trim();
+            if (!text) continue;
+            if (normLabel && text.toLowerCase().replace(/[\s_-]+/g, '') === normLabel) {
+                continue; // Skip the label text span
+            }
+            return text;
+        }
+
+        // Fallback: entire text content excluding label
+        const fullText = (el.textContent || '').trim();
+        if (normLabel && fullText.toLowerCase().replace(/[\s_-]+/g, '') === normLabel) {
+            return '';
+        }
+        return fullText;
     }
 
     /**
@@ -619,8 +724,8 @@ const NanoProAutoDetector = (function () {
         console.log('[NanoPro AutoDetector] Looking for Environment in sidebar...');
         const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_Environment" i], [data-testid*="label_box_div_environment" i]');
         for (const el of testIdEls) {
-            const val = extractElementValue(el);
-            if (val) {
+            const val = extractElementValue(el, 'Environment');
+            if (val && val.toLowerCase() !== 'environment') {
                 console.log(`[NanoPro AutoDetector] Environment found via data-testid: "${val}"`);
                 return { value: val, raw: val, selector: 'data-testid' };
             }
@@ -629,8 +734,11 @@ const NanoProAutoDetector = (function () {
         const row = findSidebarFieldRow('Environment');
         if (row) {
             const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
-            const val = extractElementValue(ocrDiv || row);
-            if (val) {
+            let val = ocrDiv ? extractElementValue(ocrDiv, 'Environment') : '';
+            if (!val || val.toLowerCase() === 'environment') {
+                val = extractElementValue(row, 'Environment');
+            }
+            if (val && val.toLowerCase() !== 'environment') {
                 console.log(`[NanoPro AutoDetector] Environment found via label scan: "${val}"`);
                 return { value: val, raw: val, selector: 'label-scan' };
             }
@@ -709,22 +817,24 @@ const NanoProAutoDetector = (function () {
      */
     function findTradePartnerName() {
         console.log('[NanoPro AutoDetector] Looking for trade_partner_name in sidebar...');
+        const labelStrings = /^(trade[_\s]*partner[_\s]*(?:name)?)$/i;
+
         const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_trade_partner_name" i]');
         for (const el of testIdEls) {
-            const val = extractElementValue(el);
-            if (val !== undefined && val !== null) {
-                console.log(`[NanoPro AutoDetector] trade_partner_name found via data-testid: "${val}"`);
-                return { value: val, raw: val, selector: 'data-testid' };
+            const val = extractElementValue(el, 'trade_partner_name');
+            if (val !== undefined && val !== null && val.trim() !== '' && !labelStrings.test(val.trim())) {
+                console.log(`[NanoPro AutoDetector] trade_partner_name found via data-testid: "${val.trim()}"`);
+                return { value: val.trim(), raw: val.trim(), selector: 'data-testid' };
             }
         }
 
         const row = findSidebarFieldRow('trade_partner_name') || findSidebarFieldRow('trade partner name');
         if (row) {
             const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
-            const val = extractElementValue(ocrDiv || row);
-            if (val !== undefined && val !== null) {
-                console.log(`[NanoPro AutoDetector] trade_partner_name found via label scan: "${val}"`);
-                return { value: val, raw: val, selector: 'label-scan' };
+            const val = extractElementValue(ocrDiv || row, 'trade_partner_name');
+            if (val !== undefined && val !== null && val.trim() !== '' && !labelStrings.test(val.trim())) {
+                console.log(`[NanoPro AutoDetector] trade_partner_name found via label scan: "${val.trim()}"`);
+                return { value: val.trim(), raw: val.trim(), selector: 'label-scan' };
             }
         }
 
@@ -733,54 +843,212 @@ const NanoProAutoDetector = (function () {
     }
 
     /**
+     * Find invoice_number from sidebar
+     */
+    function findInvoiceNumber() {
+        console.log('[NanoPro AutoDetector] Looking for invoice_number in sidebar...');
+        
+        // Priority 1: data-testid attributes
+        const testIdSelectors = [
+            '[data-testid*="label_box_div_invoice_number" i]',
+            '[data-testid*="label_box_div_invoice_no" i]',
+            '[data-testid*="label_box_div_inv_no" i]',
+            '[data-testid*="label_box_div_invoice#" i]',
+            '[data-testid*="label_box_div_invoice_id" i]'
+        ];
+        for (const sel of testIdSelectors) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                const val = extractElementValue(el, 'invoice_number');
+                if (val && !/^(invoice[_\s]*(?:number|no|#|id)|inv[_\s]*(?:no|#|id))$/i.test(val.trim())) {
+                    console.log(`[NanoPro AutoDetector] invoice_number found via data-testid: "${val.trim()}"`);
+                    return { value: val.trim(), raw: val.trim(), selector: 'data-testid' };
+                }
+            }
+        }
+
+        // Priority 2: Label row scan
+        const labelNames = ['invoice_number', 'invoice_no', 'inv_no', 'invoice number', 'invoice no', 'invoice #', 'invoice_id'];
+        for (const name of labelNames) {
+            const row = findSidebarFieldRow(name);
+            if (row) {
+                const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
+                let val = ocrDiv ? extractElementValue(ocrDiv, name) : '';
+                if (!val || /^(invoice[_\s]*(?:number|no|#|id)|inv[_\s]*(?:no|#|id))$/i.test(val.trim())) {
+                    val = extractElementValue(row, name);
+                }
+                if (val && !/^(invoice[_\s]*(?:number|no|#|id)|inv[_\s]*(?:no|#|id))$/i.test(val.trim())) {
+                    console.log(`[NanoPro AutoDetector] invoice_number found via label scan: "${val.trim()}"`);
+                    return { value: val.trim(), raw: val.trim(), selector: 'label-scan' };
+                }
+            }
+        }
+
+        console.log('[NanoPro AutoDetector] invoice_number not found in sidebar');
+        return null;
+    }
+
+    /**
      * Detect document page info (current page and total pages)
-     * Identifies page numbers next to or within spans with text "Page".
-     * If page number is not present, defaults to single page (Page 1 of 1).
+     * Prioritizes active interactive pagers, URL params, and active thumbnail highlights.
+     * Prevents false matches from static thumbnail 1 in document order.
      */
     function detectPageInfo() {
         try {
-            // S1: Nanonets pagination control — <span>Page</span> followed by <input> and <span>of Y</span>
-            const allSpans = document.querySelectorAll('span');
-            for (const span of allSpans) {
-                const text = (span.textContent || '').trim();
-                if (/^page$/i.test(text)) {
-                    const nextEl = span.nextElementSibling;
-                    if (nextEl) {
-                        const input = nextEl.tagName === 'INPUT' ? nextEl : nextEl.querySelector('input');
-                        if (input) {
-                            const curVal = input.value || input.getAttribute('value');
-                            const maxVal = input.getAttribute('max') || input.max;
-                            // Check sibling after input for "of Y"
-                            const afterInput = nextEl.nextElementSibling;
-                            const afterText = (afterInput?.textContent || '').trim();
-                            const afterMatch = afterText.match(/(?:of|\/)\s*(\d+)/i);
+            // S1: Active Pager Control — <input> element used for pagination (interactive viewer)
+            const inputs = document.querySelectorAll('input');
+            for (const input of inputs) {
+                // Never treat table cells, rows, droppable grid inputs, or extension overlay inputs as pager control
+                if (input.closest('table, [role="table"], [role="row"], [class*="table" i], [class*="grid" i], [data-rbd-droppable-id], .nanopro-overlay, #nanopro-root, .nanopro-panel')) {
+                    continue;
+                }
 
-                            const parsedTotal = afterMatch ? parseInt(afterMatch[1], 10) :
-                                              (maxVal ? parseInt(maxVal, 10) : 1);
-                            const totalPages = (parsedTotal && parsedTotal > 0) ? parsedTotal : 1;
-                            const parsedCur = curVal ? parseInt(curVal, 10) : 1;
-                            const currentPage = (parsedCur && parsedCur > 0) ? parsedCur : 1;
+                const curValStr = (input.value || input.getAttribute('value') || '').trim();
+                const curNum = parseInt(curValStr, 10);
+                if (!isNaN(curNum) && curNum > 0 && curNum <= 9999) {
+                    // Check if this input is a pager input
+                    const maxVal = input.getAttribute('max') || input.max;
+                    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+                    const inputClass = (input.className || '').toLowerCase();
+                    const inputName = (input.name || '').toLowerCase();
+                    const inputId = (input.id || '').toLowerCase();
+                    const isInsidePagerContainer = !!input.closest('[role="toolbar"], [class*="toolbar" i], [class*="footer" i], [class*="pager" i], [class*="pagination" i], [class*="viewer" i]');
+                    const isPagerInput = ariaLabel.includes('page') || ariaLabel.includes('pager') ||
+                                         inputClass.includes('page') || inputClass.includes('pager') ||
+                                         inputName.includes('page') || inputId.includes('page') ||
+                                         isInsidePagerContainer;
 
+                    // Check sibling element for "of Y" or "/ Y"
+                    const nextEl = input.nextElementSibling;
+                    const nextText = (nextEl?.textContent || '').trim();
+                    const siblingMatch = nextText.match(/(?:of|\/)\s*(\d+)/i);
+
+                    // Check parent text for "of Y" or "/ Y"
+                    const parent = input.parentElement;
+                    const parentText = (parent?.textContent || '').trim();
+                    const parentMatch = parentText.match(/(?:of|\/)\s*(\d+)/i);
+
+                    const totalMatch = siblingMatch || parentMatch;
+                    if (isPagerInput && (totalMatch || maxVal)) {
+                        const total = totalMatch ? parseInt(totalMatch[1], 10) : parseInt(maxVal, 10);
+                        if (total && total > 0) {
                             const info = {
-                                currentPage: currentPage,
-                                totalPages: totalPages,
-                                isMultiPage: totalPages > 1,
-                                raw: `Page ${currentPage} of ${totalPages}`,
-                                source: 'nanonets-pager'
+                                currentPage: curNum,
+                                totalPages: total,
+                                isMultiPage: total > 1,
+                                raw: `Page ${curNum} of ${total}`,
+                                source: 'active-pager-input'
                             };
-                            console.log(`[NanoPro AutoDetector] Page info detected (pager): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            console.log(`[NanoPro AutoDetector] Page info detected (active-pager-input): Current=${info.currentPage}, Total=${info.totalPages}`);
                             return info;
                         }
                     }
                 }
             }
 
-            // S2: General pattern matching across elements (direct text or siblings)
-            const allElements = document.querySelectorAll('span, div, p');
-            for (const el of allElements) {
-                const text = (el.textContent || '').trim();
+            // S2: URL Query or Hash page parameters
+            if (typeof window !== 'undefined' && window.location) {
+                const url = window.location.href + ' ' + window.location.hash;
+                const pageMatch = url.match(/[?&#](?:page|page_number|pageNum|pageNumber)=(\d+)/i) ||
+                                  url.match(/(?:\/|#)page\/(\d+)/i);
+                const totalMatch = url.match(/[?&#](?:total_pages|totalPages|num_pages)=(\d+)/i);
+                if (pageMatch) {
+                    const currentPage = parseInt(pageMatch[1], 10) || 1;
+                    const totalPages = totalMatch ? (parseInt(totalMatch[1], 10) || currentPage) : Math.max(currentPage, 1);
+                    const info = {
+                        currentPage: currentPage,
+                        totalPages: totalPages,
+                        isMultiPage: totalPages > 1,
+                        raw: `Page ${currentPage} of ${totalPages}`,
+                        source: 'url-param'
+                    };
+                    console.log(`[NanoPro AutoDetector] Page info detected (url-param): Current=${info.currentPage}, Total=${info.totalPages}`);
+                    return info;
+                }
+            }
 
-                // Direct text "Page 1 of 3", "Page 1 / 3", "Page: 1 of 3"
+            // S3: Active / Selected Page Thumbnail in sidebar
+            const activeThumbnailSelectors = [
+                '[aria-selected="true"]',
+                '[data-selected="true"]',
+                '[class*="selected" i]',
+                '[class*="active" i]',
+                '[class*="border-blue" i]',
+                '[class*="ring-blue" i]'
+            ];
+            for (const sel of activeThumbnailSelectors) {
+                const activeEls = document.querySelectorAll(sel);
+                for (const el of activeEls) {
+                    const text = (el.textContent || '').trim();
+                    const match = text.match(/page\s*[:#]?\s*(\d+)(?:\s*(?:of|\/)\s*(\d+))?/i) ||
+                                  text.match(/^(\d+)(?:\s*(?:of|\/)\s*(\d+))?$/);
+                    if (match) {
+                        const cur = parseInt(match[1], 10);
+                        if (cur > 0) {
+                            let total = match[2] ? parseInt(match[2], 10) : null;
+                            if (!total) {
+                                const parentList = el.closest('[role="list"], [role="tablist"], .overflow-auto, [class*="thumbnail" i], [class*="pages" i]');
+                                if (parentList) {
+                                    const cleanSel = sel.replace(/\[aria-selected="true"\]|\[data-selected="true"\]/, '').trim();
+                                    let siblingThumbs = [];
+                                    if (cleanSel.length > 0) {
+                                        try {
+                                            siblingThumbs = parentList.querySelectorAll(cleanSel);
+                                        } catch (e) {}
+                                    }
+                                    if (siblingThumbs.length <= 1) {
+                                        try {
+                                            siblingThumbs = parentList.querySelectorAll('[role="listitem"], [role="tab"], [class*="thumbnail" i], [class*="page" i]');
+                                        } catch (e) {}
+                                    }
+                                    if (siblingThumbs.length > 1) {
+                                        total = siblingThumbs.length;
+                                    }
+                                }
+                            }
+                            const totalPages = (total && total > 0) ? total : Math.max(cur, 1);
+                            const info = {
+                                currentPage: cur,
+                                totalPages: totalPages,
+                                isMultiPage: totalPages > 1,
+                                raw: `Page ${cur} of ${totalPages}`,
+                                source: 'active-thumbnail'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (active-thumbnail): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
+                    }
+                }
+            }
+
+            // S4: Viewer Toolbar / Header / Footer text (outside thumbnail sidebar)
+            const toolbarEls = document.querySelectorAll('[role="toolbar"], header, nav, [class*="toolbar" i], [class*="footer" i], [class*="header" i], [class*="viewer" i], [class*="pager" i], [class*="pagination" i]');
+            for (const tb of toolbarEls) {
+                const text = (tb.textContent || '').trim();
+                const match = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i) ||
+                              text.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                if (match) {
+                    const currentPage = parseInt(match[1], 10) || 1;
+                    const totalPages = parseInt(match[2], 10) || 1;
+                    const info = {
+                        currentPage: currentPage,
+                        totalPages: totalPages,
+                        isMultiPage: totalPages > 1,
+                        raw: `Page ${currentPage} of ${totalPages}`,
+                        source: 'toolbar-text'
+                    };
+                    console.log(`[NanoPro AutoDetector] Page info detected (toolbar): Current=${info.currentPage}, Total=${info.totalPages}`);
+                    return info;
+                }
+            }
+
+            // S5: General pattern matching across leaf elements (excluding inactive thumbnail containers)
+            const allSpans = document.querySelectorAll('span, div, p');
+            for (const el of allSpans) {
+                if (el.children.length > 0) continue;
+                if (el.closest('[class*="thumbnail" i]:not([class*="selected" i]):not([class*="active" i])')) continue;
+
+                const text = (el.textContent || '').trim();
                 const directMatch = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i);
                 if (directMatch) {
                     const currentPage = parseInt(directMatch[1], 10) || 1;
@@ -794,48 +1062,6 @@ const NanoProAutoDetector = (function () {
                     };
                     console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
                     return info;
-                }
-
-                // Span has literal text "Page" or "Page:"
-                if (/^page\s*[:#]?$/i.test(text)) {
-                    const nextEl = el.nextElementSibling;
-                    if (nextEl) {
-                        const nextText = (nextEl.textContent || '').trim();
-                        const siblingMatch = nextText.match(/^(\d+)\s*(?:of|\/)\s*(\d+)/i);
-                        if (siblingMatch) {
-                            const currentPage = parseInt(siblingMatch[1], 10) || 1;
-                            const totalPages = parseInt(siblingMatch[2], 10) || 1;
-                            const info = {
-                                currentPage: currentPage,
-                                totalPages: totalPages,
-                                isMultiPage: totalPages > 1,
-                                raw: `Page ${currentPage} of ${totalPages}`,
-                                source: 'next-sibling'
-                            };
-                            console.log(`[NanoPro AutoDetector] Page info detected (sibling): Current=${info.currentPage}, Total=${info.totalPages}`);
-                            return info;
-                        }
-                    }
-
-                    const parent = el.parentElement;
-                    if (parent) {
-                        const parentText = (parent.textContent || '').trim();
-                        const pMatch = parentText.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i) ||
-                                      parentText.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
-                        if (pMatch) {
-                            const currentPage = parseInt(pMatch[1], 10) || 1;
-                            const totalPages = parseInt(pMatch[2], 10) || 1;
-                            const info = {
-                                currentPage: currentPage,
-                                totalPages: totalPages,
-                                isMultiPage: totalPages > 1,
-                                raw: `Page ${currentPage} of ${totalPages}`,
-                                source: 'parent-text'
-                            };
-                            console.log(`[NanoPro AutoDetector] Page info detected (parent): Current=${info.currentPage}, Total=${info.totalPages}`);
-                            return info;
-                        }
-                    }
                 }
             }
         } catch (e) {
@@ -857,6 +1083,7 @@ const NanoProAutoDetector = (function () {
      */
     function findSidebarFields() {
         return {
+            invoiceNumber: findInvoiceNumber(),
             invoiceAmount: findInvoiceAmount(),
             environment: findEnvironment(),
             isRental: findIsRental(),
@@ -867,16 +1094,23 @@ const NanoProAutoDetector = (function () {
 
     /**
      * Check if two URLs or hashes belong to the same document instance (including multi-page pages)
-     * Supports both full URLs and hash strings.
-     * e.g.
-     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6
-     * https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6
+     * Supports both full URLs and hash strings, with optional invoice number checking.
      */
-    function isSameDocumentInstance(hashA, hashB) {
+    function isSameDocumentInstance(hashA, hashB, invoiceNumA = null, invoiceNumB = null) {
         if (!hashA || !hashB) return false;
+
+        // If both invoice numbers are known and DIFFERENT, they are distinct invoices!
+        if (invoiceNumA && invoiceNumB && invoiceNumA.trim() !== '' && invoiceNumB.trim() !== '') {
+            if (invoiceNumA.trim().toLowerCase() !== invoiceNumB.trim().toLowerCase()) {
+                console.log(`[NanoPro AutoDetector] Different invoice numbers: "${invoiceNumA}" vs "${invoiceNumB}" -> different invoice instance`);
+                return false;
+            }
+        }
+
         if (hashA === hashB) return true;
 
-        const pattern = /#\/ocr\/test\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
+        // Broaden route support: /ocr/test/, /ocr/, /review/, /workflow/, /models/
+        const pattern = /#\/(?:ocr|review|workflow|models)(?:\/test)?\/([a-f0-9-]+)\/([a-f0-9-]+)/i;
         const matchA = hashA.match(pattern);
         const matchB = hashB.match(pattern);
 
@@ -889,6 +1123,12 @@ const NanoProAutoDetector = (function () {
 
         if (modelIdA !== modelIdB) return false;
         if (fileIdA === fileIdB) return true;
+
+        // If both invoice numbers are known and IDENTICAL, they belong to the same invoice instance!
+        if (invoiceNumA && invoiceNumB && invoiceNumA.trim() !== '' && invoiceNumA.trim().toLowerCase() === invoiceNumB.trim().toLowerCase()) {
+            console.log(`[NanoPro AutoDetector] Same invoice number "${invoiceNumA}" across files -> same invoice instance`);
+            return true;
+        }
 
         // Check if both are UUIDv1 for pages of the same multipage document
         const partsA = fileIdA.split('-');
@@ -923,6 +1163,7 @@ const NanoProAutoDetector = (function () {
     return {
         detect: detect,
         diagnose: diagnose,
+        findInvoiceNumber: findInvoiceNumber,
         findInvoiceAmount: findInvoiceAmount,
         findEnvironment: findEnvironment,
         findIsRental: findIsRental,
