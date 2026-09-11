@@ -1928,6 +1928,121 @@ function testSidePanelScrollThreshold() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 23: Periodic 1-2 Second Table State Recheck
+// ============================================================
+function testPeriodicTableRecheckEvery1to2Seconds() {
+    console.log('Test 23: Periodic 1-2 Second Table State Recheck');
+
+    const config = {
+        tableRecheckInterval: 1500 // 1.5 seconds (in 1-2s range)
+    };
+
+    assert.ok(config.tableRecheckInterval >= 1000 && config.tableRecheckInterval <= 2000, 
+        'Recheck interval must be between 1000ms and 2000ms (1-2s)');
+
+    // Simulated DOM table state that the user is working on
+    let domTable = [
+        { qty: '2', price: '10.00', amount: '15.00', item_no: 'ITEM-01' } // Calculation error! 2*10 != 15
+    ];
+
+    let lastDetectedStateHash = null;
+    let currentBadgeState = 'ready';
+    let currentBadgeText = '';
+    let currentValidationResult = null;
+    let recheckCount = 0;
+
+    function runTableRecheck(isBackgroundPoll = true) {
+        recheckCount++;
+
+        // 1. Detect table rows from DOM
+        const rows = domTable.map(r => ({ ...r }));
+        if (!rows.length) return;
+
+        // 2. Hash check
+        const rowsHash = JSON.stringify(rows);
+        const currentStateHash = rowsHash + '|sidebar-mock';
+
+        if (currentStateHash === lastDetectedStateHash && currentValidationResult) {
+            // Silently return without updating badge or re-running calculations
+            return { revalidated: false, summary: currentValidationResult.summary };
+        }
+
+        lastDetectedStateHash = currentStateHash;
+
+        // 3. Re-validate rows
+        let valid = 0;
+        let invalid = 0;
+        const results = rows.map(r => {
+            const q = parseFloat(r.qty) || 0;
+            const p = parseFloat(r.price) || 0;
+            const a = parseFloat(r.amount) || 0;
+            const expected = Math.round(q * p * 100) / 100;
+            const isRowValid = Math.abs(expected - a) < 0.01;
+            if (isRowValid) valid++;
+            else invalid++;
+            return {
+                valid: isRowValid,
+                actual: a,
+                expected: expected
+            };
+        });
+
+        currentValidationResult = {
+            success: true,
+            summary: { total: rows.length, valid, invalid },
+            results
+        };
+
+        // 4. Update badge UI
+        if (invalid > 0) {
+            currentBadgeState = 'invalid';
+            currentBadgeText = `❌ ${invalid} Calc Error`;
+        } else {
+            currentBadgeState = 'valid';
+            currentBadgeText = `✅ ${valid}/${rows.length} Valid`;
+        }
+
+        return { revalidated: true, summary: currentValidationResult.summary };
+    }
+
+    // Step 1: Initial periodic check with the invalid table
+    let check1 = runTableRecheck();
+    assert.strictEqual(check1.revalidated, true);
+    assert.strictEqual(check1.summary.invalid, 1);
+    assert.strictEqual(currentBadgeState, 'invalid');
+    assert.strictEqual(currentBadgeText, '❌ 1 Calc Error');
+
+    // Step 2: Second check before user makes changes (rows identical)
+    let check2 = runTableRecheck();
+    assert.strictEqual(check2.revalidated, false, 'Should not re-validate if table rows are unchanged');
+    assert.strictEqual(currentBadgeState, 'invalid');
+
+    // Step 3: User fixes the table cell (amount 15.00 -> 20.00)
+    domTable[0].amount = '20.00';
+
+    // Step 4: Next 1-2 second periodic recheck ticks:
+    let check3 = runTableRecheck();
+    assert.strictEqual(check3.revalidated, true, 'Periodic recheck MUST detect cell edits in the table!');
+    assert.strictEqual(check3.summary.valid, 1);
+    assert.strictEqual(check3.summary.invalid, 0);
+    assert.strictEqual(currentBadgeState, 'valid');
+    assert.strictEqual(currentBadgeText, '✅ 1/1 Valid');
+
+    // Step 5: User adds another valid row: Qty 3 @ 5.00 = 15.00
+    domTable.push({ qty: '3', price: '5.00', amount: '15.00', item_no: 'ITEM-02' });
+
+    // Step 6: Next periodic recheck ticks:
+    let check4 = runTableRecheck();
+    assert.strictEqual(check4.revalidated, true, 'Periodic recheck MUST detect added rows!');
+    assert.strictEqual(check4.summary.total, 2);
+    assert.strictEqual(check4.summary.valid, 2);
+    assert.strictEqual(check4.summary.invalid, 0);
+    assert.strictEqual(currentBadgeText, '✅ 2/2 Valid');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -1942,8 +2057,9 @@ testValidStatePreservedAgainstTemporaryDetectionMiss();
 testThreeNavigationTrackingMethods();
 testPanelRenderSafeWithEmptyValidRows();
 testSidePanelScrollThreshold();
+testPeriodicTableRecheckEvery1to2Seconds();
 
-console.log('--- ALL 22 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 23 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 

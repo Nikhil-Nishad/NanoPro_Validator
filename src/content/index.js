@@ -18,7 +18,8 @@
         observeMutations: true,
         retryAttempts: 10, // Increased for graceful loading of new files (10 * 350ms = 3.5s)
         retryDelay: 350,
-        autoDetectDelay: 200  // Optimized for fast rendering response
+        autoDetectDelay: 200, // Optimized for fast rendering response
+        tableRecheckInterval: 1500 // Recheck table state every 1.5 seconds (1-2s continuous loop)
     };
 
     // State
@@ -27,7 +28,7 @@
     let validationResult = null;
     let lastSelection = null;
     let autoDetectTimer = null;
-    let autoPollTimer = null;
+    let tablePollTimer = null;
     let lastDetectedStateHash = null;
     let initializedForFile = null;
 
@@ -562,9 +563,11 @@
         // Handle mode-specific setup
         if (newMode === 'auto') {
             scheduleAutoDetect();
+            startTablePolling();
             setupMutationObserver();
         } else {
             clearAutoDetect();
+            stopTablePolling();
             teardownMutationObserver();
             NanoProBadge.setReady();
         }
@@ -591,25 +594,43 @@
         console.log(`[NanoPro v2] Auto-detect scheduled in ${CONFIG.autoDetectDelay}ms (maxRetries=${maxRetries})`);
         autoDetectTimer = setTimeout(() => runAutoDetection(0, false, false, maxRetries), CONFIG.autoDetectDelay);
 
-        // Start non-intrusive 1-second background polling for fast recalculation
-        autoPollTimer = setInterval(() => {
-            if (currentMode === 'auto') {
-                runAutoDetection(0, true); // true = isBackgroundPoll
-            }
-        }, 1000);
+        // Ensure continuous 1-2s periodic table recheck is running
+        startTablePolling();
     }
 
     /**
-     * Clear pending auto-detection and background polling
+     * Start continuous 1-2 second periodic table recheck
+     * Continuously re-scans and validates the table every 1.5 seconds so edits,
+     * cell corrections, and state updates reflect automatically.
+     */
+    function startTablePolling() {
+        if (tablePollTimer) return; // Keep existing active timer running
+        tablePollTimer = setInterval(() => {
+            if (currentMode === 'auto' && isSingleFilePage()) {
+                runAutoDetection(0, true /* isBackgroundPoll */);
+            }
+        }, CONFIG.tableRecheckInterval);
+        console.log(`[NanoPro v3] Continuous table recheck timer active (${CONFIG.tableRecheckInterval}ms interval)`);
+    }
+
+    /**
+     * Stop continuous periodic table recheck
+     */
+    function stopTablePolling() {
+        if (tablePollTimer) {
+            clearInterval(tablePollTimer);
+            tablePollTimer = null;
+            console.log('[NanoPro v3] Continuous table recheck timer stopped');
+        }
+    }
+
+    /**
+     * Clear pending one-shot auto-detection
      */
     function clearAutoDetect() {
         if (autoDetectTimer) {
             clearTimeout(autoDetectTimer);
             autoDetectTimer = null;
-        }
-        if (autoPollTimer) {
-            clearInterval(autoPollTimer);
-            autoPollTimer = null;
         }
     }
 
@@ -645,7 +666,11 @@
                     const isDocPage = pInfo && (pInfo.isMultiPage || pInfo.totalPages > 1 || 
                         pageFields.environment || pageFields.invoiceAmount || pageFields.tradePartnerName || pageFields.invoiceNumber);
 
-                    if (isDocPage) {
+                    // Check if this page already had a confirmed table with rows:
+                    const existingPageData = multiPageStore.pages?.[pageNum];
+                    const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
+
+                    if (isDocPage && !hadExistingTable) {
                         // Quick wait of 1 retry (150ms) for table to render if page just transitioned
                         const maxTableWait = 1;
                         if (retryCount < maxTableWait && !isBackgroundPoll) {
@@ -718,8 +743,7 @@
             }
 
             if (isBackgroundPoll && !needsRefresh) {
-                console.log(`[NanoPro v2] Background poll detected changes, re-validating...`);
-                NanoProBadge.setLoading();
+                console.log(`[NanoPro v3] Periodic table recheck detected changes, re-validating...`);
             }
 
             // Cache the new hash
@@ -1827,11 +1851,7 @@
             clearAutoDetect();
             // Fast execution: 100ms delay, max 2 retries (300ms max)
             autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 2), 100);
-            autoPollTimer = setInterval(() => {
-                if (currentMode === 'auto') {
-                    runAutoDetection(0, true);
-                }
-            }, 1000);
+            startTablePolling();
         }
     }
 
@@ -2091,6 +2111,7 @@
     function cleanup() {
         NanoProSelector.cancel();
         clearAutoDetect();
+        stopTablePolling();
         teardownMutationObserver();
         teardownInputListeners();
         NanoProOverlay.remove();

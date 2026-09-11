@@ -35,6 +35,8 @@ const NanoProAutoDetector = (function () {
         item_no: /^(item_no|item_number|part_no|sku)$/i,
     };
 
+    const DATA_INPUT_SELECTOR = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])';
+
     // ═══════════════════════════════════════════════════════
     // MAIN DETECTION (DOM-only, non-intrusive)
     // ═══════════════════════════════════════════════════════
@@ -143,7 +145,7 @@ const NanoProAutoDetector = (function () {
         // S3: shrink-0 > overflow-hidden
         const s3 = document.querySelectorAll('div.shrink-0 > div.relative.overflow-hidden');
         for (const c of s3) {
-            if (c.offsetHeight > 50 && c.querySelectorAll('input[type="text"]').length >= 3) {
+            if (c.offsetHeight > 50 && c.querySelectorAll(DATA_INPUT_SELECTOR).length >= 3) {
                 console.log('[NanoPro AutoDetector] S3: shrink-0 > overflow-hidden ✅');
                 return c;
             }
@@ -152,8 +154,8 @@ const NanoProAutoDetector = (function () {
         // S4: overflow-auto with many inputs (table area)
         const scrollables = document.querySelectorAll('.overflow-auto');
         for (const s of scrollables) {
-            const inputs = s.querySelectorAll('input[type="text"]');
-            if (inputs.length >= 6 && s.offsetHeight > 50) {
+            const inputs = s.querySelectorAll(DATA_INPUT_SELECTOR);
+            if (inputs.length >= 4 && s.offsetHeight > 50) {
                 console.log('[NanoPro AutoDetector] S4: overflow-auto container ✅');
                 return s;
             }
@@ -167,8 +169,8 @@ const NanoProAutoDetector = (function () {
         }
 
         // S6: fallback to document body
-        const allInputs = document.querySelectorAll('input[type="text"]');
-        if (allInputs.length >= 6) {
+        const allInputs = document.querySelectorAll(DATA_INPUT_SELECTOR);
+        if (allInputs.length >= 4) {
             console.log('[NanoPro AutoDetector] S6: document body fallback');
             return document.body;
         }
@@ -300,14 +302,14 @@ const NanoProAutoDetector = (function () {
             // First pass: Direct span match
             for (const hdr of headers) {
                 if (hdr.rect && typeof hdr.rect.left === 'number' && typeof hdr.rect.right === 'number') {
-                    if (inputCenterX >= (hdr.rect.left - 4) && inputCenterX <= (hdr.rect.right + 4)) {
+                    if (inputCenterX >= (hdr.rect.left - 6) && inputCenterX <= (hdr.rect.right + 6)) {
                         return hdr;
                     }
                 }
             }
-            // Second pass: Closest header by center X
+            // Second pass: Closest header by center X (within 80px distance limit)
             let closestHdr = null;
-            let closestDist = Infinity;
+            let closestDist = 80;
             for (const hdr of headers) {
                 const dist = Math.abs(inputCenterX - hdr.centerX);
                 if (dist < closestDist) {
@@ -353,21 +355,22 @@ const NanoProAutoDetector = (function () {
             const rows = [];
             for (let i = 0; i < rowContainers.length; i++) {
                 const rowEl = rowContainers[i];
-                const inputs = Array.from(rowEl.querySelectorAll('input'));
+                const inputs = Array.from(rowEl.querySelectorAll('input, textarea, [contenteditable="true"]'));
                 const row = { qty: null, price: null, amount: null, item_no: null };
 
                 for (const input of inputs) {
-                    if (input.classList.contains('MuiAutocomplete-input')) continue;
+                    if (input.classList && input.classList.contains('MuiAutocomplete-input')) continue;
                     if (input.placeholder === 'Select a column label') continue;
                     const inputType = (input.type || 'text').toLowerCase();
-                    if (inputType !== 'text' && inputType !== '' && inputType !== 'search' && inputType !== 'number') continue;
+                    if (inputType !== 'text' && inputType !== '' && inputType !== 'search' && inputType !== 'number' && input.tagName !== 'TEXTAREA' && !input.isContentEditable) continue;
 
                     const rect = input.getBoundingClientRect();
                     const centerX = rect.width > 0 ? (rect.left + rect.width / 2) : 0;
                     const matchedHdr = getHeaderForInput(centerX);
 
                     if (matchedHdr) {
-                        const val = (input.value !== undefined && input.value !== null) ? input.value.trim() : '';
+                        const rawVal = input.value !== undefined ? input.value : (input.textContent || '');
+                        const val = (rawVal !== undefined && rawVal !== null) ? rawVal.trim() : '';
                         assignCell(row, matchedHdr, val);
                     }
                 }
