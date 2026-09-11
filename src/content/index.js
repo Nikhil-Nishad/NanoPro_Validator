@@ -1480,6 +1480,10 @@
                     if (isOnlyDashR) {
                         reason = 'ONLY_DASH_R';
                         severity = 'ERROR';
+                    } else if (/\s/.test(itemNo)) {
+                        // Rule: Item_No must NOT contain any spaces or white spaces
+                        reason = 'CONTAINS_WHITESPACE';
+                        severity = 'ERROR';
                     } else if (rentalStatus && rentalStatus.isConsistent) {
                         // Rule 4: If is_rental is all True only then there should be -R in item_no
                         if (rentalStatus.allTrue) {

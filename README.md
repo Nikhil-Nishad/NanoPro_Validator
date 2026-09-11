@@ -1,74 +1,61 @@
 # 🧮 NanoPro Validator
 
-> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, rental consistency, virtualized sidebar scrolling memory, and multi-page cumulative totals on Nanonets review pages.
+> Chrome/Edge extension that validates invoice line item calculations, sidebar fields, rental consistency, virtualized sidebar scrolling memory, multi-page cumulative totals, whitespace integrity, and single-file page isolation on Nanonets review pages.
 
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-4.0.0-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
----
-
-## 🔄 Version Comparison: Version 2.0 vs Version 3.0
-
-The following table and breakdown clearly distinguish what was introduced in **Version 2.0** versus the advanced capabilities added in **Version 3.0**:
-
-| Capability | Version 2.0 (Foundations) | Version 3.0 (Enterprise Suite) |
-|---|---|---|
-| **Document Page Handling** | Single-page / active DOM table only | **Full Multi-Page Support** + Single-page fallback |
-| **Invoice Total Validation** | Compares active table sum to `invoice_amount` | **Cumulative Multi-Page Sum**: Adds line amounts across all pages/tables to match `invoice_amount` on the last page |
-| **Sidebar Field Checks** | None (only scanned `invoice_amount`) | **Strict Sidebar Validation**: `Environment=prod`, `is_rental` consistency, non-blank `trade_partner_name` |
-| **Virtualized Sidebar Scrolling** | Lost fields scrolled out of DOM view | **Persistent Field Memory**: Remembers fields when user scrolls sidebar to bottom and back to top; shows `(remembered)` status |
-| **Multiple Totals Guard** | Not checked (took first match) | **Multiplicity Error**: Flags error if multiple `invoice_amount` instances exist |
-| **`Item_No` Validation** | Basic `-R` caution tag | **Deep Cross-Validation**: Prohibits standalone `"-R"`; validates `-R` suffix against `is_rental` (`all True` vs `all False`) |
-| **Page Number Detection** | Not supported | **Auto-detects Page Info** (`Page X of Y`) via Nanonets pagination controls |
-| **Multi-Page URL Instance Matching** | Basic URL hash equality check | **UUIDv1 Pattern Matching**: Recognizes page URLs within the same file instance (e.g. `b8c39de8...` vs `b8c39e6e...`) to retain state across pages |
-| **SPA Route Tracking** | Basic URL listener | **Session-Scoped File Hash Tracking**: Cleans up and isolates multi-page stores and sidebar memory between distinct documents |
-| **UI Experience** | Standard row list + total card | **Dedicated Sidebar Fields Grid**, multi-page progress badges, and page-by-page breakdown pills |
+📖 **Detailed Documentation:** For an exhaustive encyclopedia of every check, rule, threshold, and regex, see [Docs/RULES_AND_CHECKS_SPECIFICATION.md](Docs/RULES_AND_CHECKS_SPECIFICATION.md).
 
 ---
 
-### 📦 What's in Version 2.0
-- **Dual Mode Operation**:
-  - **Auto Mode**: Heuristic column and container detection finding `Qty`, `Item_Price`, and `Line_Amount` automatically.
-  - **Manual Mode**: Visual drag-to-snip overlay tool to manually select line item tables.
-- **Row-Level Math Validation**: Validates `Qty × Price = Amount` for every row with configurable tolerance (±$0.05).
-- **Intelligent Correction Suggester**: Suggests expected numbers with confidence scores for erroneous rows.
-- **Basic Single-Table Total Check**: Sums the active table's line amounts and checks against the sidebar `invoice_amount`.
-- **Draggable & Resizable Shadow DOM UI**: Floating badge (`Ctrl+Drag` to move) and panel (resizable corner) that never leak styles into or conflict with Nanonets styles.
+## 🔄 Version Evolution: v2.0 vs v3.0 vs v4.0
+
+| Capability | Version 2.0 (Foundations) | Version 3.0 (Multi-Page & Sidebar) | Version 4.0 (Enterprise Precision & Isolation) |
+|---|---|---|---|
+| **Domain Scope** | Generic `*.nanonets.com` | Generic `*.nanonets.com` | **Strict `app.nanonets.com` Alone**: Isolated in manifest and runtime |
+| **Page View Isolation** | Present on all sub-pages | Present on all sub-pages | **Opened File Pages Only**: Inactive and completely unmounted from DOM on file list views (`#/ocr/test/{modelId}`) |
+| **`Item_No` Whitespace** | Not checked | Not checked | **Zero-Whitespace Enforcement**: Spaces or tabs throw ❌ `Item_No Error` (`CONTAINS_WHITESPACE`) |
+| **Header Collision Protection** | Basic text matching | Basic text matching | **Strict Column Isolation**: Negative lookaheads prevent `Item_Price` vs `Cyl_Returned`, `Qty` vs `Cyl_Shipped`, and `Item_No` vs `Item_No_2` |
+| **Navigation Detection** | Basic URL listener | Basic URL listener | **3-Method Real-Time Tracking**: URL route, sidebar `invoice_number`, and pagination input changes |
+| **Live Table Edits** | Recheck on reload/resnip | Recheck on reload/resnip | **Continuous 1.5s Heartbeat**: Automatically recalculates live table edits without page refresh |
+| **Sidebar Scroll Recheck** | Passive memory | Remembers unmounted fields | **40% Scroll Threshold**: Triggers instant field rechecks on 40% vertical scroll |
+| **Multi-Page Error Visibility** | Single status | Error count | **Per-Page Error Pills**: Displays which exact pages contain errors (e.g. `❌ P1, P3 Errors`) |
+| **Table-less Pages** | Failed / error | Could trigger misses | **Safe Table-less Handling**: Cleanly recognizes 0-row cover pages and receipts ($0.00) without crashes |
+| **Wipe Protection** | None | None | **DOM Miss Protection**: Preserves confirmed valid table data against temporary detection blips |
 
 ---
 
-### 🚀 What's New in Version 3.0
-1. **Multi-Page Line Amount Accumulation & Single-Page Fallback**:
-   - **Single-Page Fallback**: If page numbers are not detected, the document is seamlessly treated as a 1-page document (`Page 1 of 1`).
-   - **Cumulative Total Aggregation**: For multi-page invoices (`Page 1 of N`), line amounts from tables across **all pages are automatically recorded and summed** as the reviewer navigates through the document.
-   - **Last Page Final Invoice Matching**: Enforces that the cumulative sum of all pages equals the final `invoice_amount` (located on the last page).
-   - **Smart Navigation Guidance**: Shows informative progress states on earlier pages (`Page 1 of 3 recorded... navigate to page 3 to validate`) and warns if earlier pages were skipped (`Missing earlier pages [1, 2]`).
-2. **Multi-Page URL Pattern & Document Instance Matching**:
-   - When flipping pages of a multi-page invoice, Nanonets generates consecutive UUIDv1 page URLs (for example:
-     - Page 1: `https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39de8-a6eb-11f1-8c8d-4e5c90ea38a6`
-     - Page 2: `https://app.nanonets.com/#/ocr/test/9dc157f9-363e-4456-bfc4-039cc7f16d39/b8c39e6e-a6eb-11f1-8c8e-4e5c90ea38a6`
-   - NanoPro recognizes these URLs as belonging to the **same document instance**, preserving cumulative line items and remembered sidebar fields across page transitions.
-   - When a completely different document is opened, all state is automatically reset for pristine isolation.
-3. **Virtualized Sidebar Scrolling & Memory**:
-   - In Nanonets, the sidebar uses virtual scrolling that unmounts elements when scrolled out of view.
-   - Users can manually scroll down the sidebar to review fields and scroll back to the top: NanoPro intercepts scroll events via capture-phase listeners, **remembers every field discovered at any scroll position**, and displays them with a subtle `(remembered)` badge.
-   - All rules (`Environment`, `trade_partner_name`, `is_rental`, `invoice_amount`) evaluate successfully even when the elements are currently unmounted from the DOM.
-4. **Strict Sidebar Field Validations**:
-   - **`Environment` Field**: Must be present and strictly equal `"prod"` (case-insensitive: `prod`, `PROD`).
-   - **`is_rental` Consistency**: When multiple `is_rental` entries appear in the sidebar, checks that all entries are strictly identical (either all `True` or all `False`).
-   - **`trade_partner_name` Presence**: Verifies that `trade_partner_name` is present and not blank or null.
-   - **Single `invoice_amount` Check**: Flags an error if duplicate or multiple `invoice_amount` fields are present in the sidebar.
-5. **`Item_No` Rental Cross-Validation**:
-   - **No Standalone `"-R"`**: `Item_No` cannot be only `"-R"` (flagged as ❌ Error). It must be an actual SKU or text with `-R` suffix.
-   - **When `is_rental` is all `True`**: Line items are expected to have the `-R` suffix. Missing suffixes are flagged with ⚠️ Caution.
-   - **When `is_rental` is all `False`**: Line items must **NOT** have a `-R` suffix. Unexpected suffixes are flagged as ❌ Errors.
-6. **Document Page Detection**:
-   - Accurately reads Nanonets pagination controls (`<span>Page</span>`, `<input value="X" max="Y">`, and `<span>of Y</span>`).
-7. **Dedicated Sidebar Fields UI Grid**:
-   - Modern cards for Environment, Trade Partner, is_rental, and Page Info with live pass/fail icons and badges.
-8. **Zero-Purple Design Compliance**:
-   - Strictly engineered using slate, emerald, sky blue, amber, and coral color tokens.
+### 🚀 What's New in Version 4.0
+1. **Zero-Whitespace Enforcement on `Item_No`**:
+   - `Item_No` values must **NOT** contain any spaces or whitespace anywhere in the string (leading, trailing, internal, spaces, tabs, newlines).
+   - Any whitespace throws an immediate ❌ **`Item_No Error`** (`reason: 'CONTAINS_WHITESPACE'`), triggering badge shake and turning the status Red.
+2. **Opened File Activation vs File List Suppression (`app.nanonets.com` alone)**:
+   - Manifest host permissions and content scripts are restricted strictly to `https://app.nanonets.com/*`.
+   - The extension automatically detects when you are on the file list (`#/ocr/test/{modelId}?rowsPerPage`) and **unmounts the overlay completely from the DOM**, eliminating visual clutter.
+   - When a file is opened (`#/ocr/test/{modelId}/{fileId}`), the extension automatically mounts and activates.
+3. **Column Isolation & Anti-Collision Engine**:
+   - Strict regex exclusions prevent confusing `Item_Price` with `Cyl_Returned`, `Qty` with `Cyl_Shipped`, or `Item_No` with `Item_No_2`.
+4. **Three Real-Time Navigation Tracking Methods**:
+   - Method 1: URL route and hash watcher.
+   - Method 2: Sidebar `invoice_number` change detector (detects document switches even when SPA hash lags).
+   - Method 3: Pagination input tracker for multi-page documents.
+5. **Continuous 1.5s Periodic Table State Heartbeat**:
+   - Rechecks table rows every 1.5 seconds. If a reviewer updates any quantity or price directly in Nanonets, calculations update instantly without requiring manual page reload.
+6. **40% Side Panel Scroll Recheck**:
+   - Automatically detects when the reviewer scrolls the sidebar by 40% or more, capturing virtualized fields that mounted into view.
+7. **Multi-Page Error Tracking**:
+   - Accurately tracks which specific pages in a multi-page document have errors and displays pills (e.g. `❌ P1, P3 Errors`).
+
+---
+
+### 📦 Key Foundations from Version 3.0 & 2.0
+- **Cumulative Multi-Page Line Item Total**: Sums line items across all pages and validates against the final `invoice_amount` on the last page.
+- **Strict Sidebar Fields**: `Environment === "prod"`, `is_rental` consistency (`all True` or `all False`), and `trade_partner_name` with $\ge 2$ characters.
+- **Rental Cross-Validation**: `Item_No` cannot be only `"-R"`; `-R` suffix required on rentals (⚠️ Caution if missing) and forbidden on non-rentals (❌ Error if present).
+- **Dual Mode UI**: Auto detection with visual snip manual mode fallback.
+- **Zero-Purple Design System**: Clean slate, emerald, coral, amber, and sky blue tokens rendered inside an isolated Shadow DOM.
 
 ---
 
@@ -82,7 +69,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 10 validation test suites)
+# Run the automated test suite (all 25 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 
@@ -94,7 +81,7 @@ node tests/sidebar_validation_test.js
 3. Click the **Load unpacked** button in the top-left.
 4. In the folder picker dialog, select the project directory:
    `d:\Personal\Projects\NanoPro_extension` (the folder containing `manifest.json`).
-5. The extension **NanoPro Validator v3.0.0** is now active!
+5. The extension **NanoPro Validator v4.0.0** is now active!
 
 ### 3. How to Reload After Code Updates
 Whenever you update code or pull changes:
@@ -259,6 +246,6 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <strong>NanoPro Validator v3.0.0</strong><br>
+  <strong>NanoPro Validator v4.0.0</strong><br>
   Built with ❤️ for invoice validation accuracy
 </p>

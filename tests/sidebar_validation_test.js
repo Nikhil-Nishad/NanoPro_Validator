@@ -150,6 +150,9 @@ function evaluateItemNoValidation(rawItemNos, hasItemNoColumn, rentalStatus) {
             if (isOnlyDashR) {
                 reason = 'ONLY_DASH_R';
                 severity = 'ERROR';
+            } else if (/\s/.test(itemNo)) {
+                reason = 'CONTAINS_WHITESPACE';
+                severity = 'ERROR';
             } else if (rentalStatus && rentalStatus.isConsistent) {
                 if (rentalStatus.allTrue) {
                     if (!hasDashRSuffix) {
@@ -2150,6 +2153,57 @@ function testSingleFilePageActivationVsFileListSuppression() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 25: Item_No Whitespace Prohibition Validation
+// ============================================================
+function testItemNoWhitespaceProhibition() {
+    console.log('Test 25: Item_No Whitespace Prohibition (spaces/whitespace throw item_no error)');
+
+    const rentalTrueState = { isConsistent: true, allTrue: true, allFalse: false, status: 'VALID' };
+    const rentalFalseState = { isConsistent: true, allTrue: false, allFalse: true, status: 'VALID' };
+
+    // 1. Internal space -> ERROR
+    const resInternalSpace = evaluateItemNoValidation(['CYL 001', 'ITEM 999-R'], true, rentalTrueState);
+    assert.strictEqual(resInternalSpace.rowResults[0].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resInternalSpace.rowResults[0].itemNoSeverity, 'ERROR');
+    assert.strictEqual(resInternalSpace.errors.length, 2);
+    assert.strictEqual(resInternalSpace.rowResults[1].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resInternalSpace.rowResults[1].itemNoSeverity, 'ERROR');
+
+    // 2. Space before suffix -> ERROR
+    const resSpaceBeforeSuffix = evaluateItemNoValidation(['PART-100 -R'], true, rentalTrueState);
+    assert.strictEqual(resSpaceBeforeSuffix.rowResults[0].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resSpaceBeforeSuffix.rowResults[0].itemNoSeverity, 'ERROR');
+
+    // 3. Leading or trailing space -> ERROR
+    const resSurroundingSpace = evaluateItemNoValidation([' ITEM-01', 'ITEM-02 '], true, rentalFalseState);
+    assert.strictEqual(resSurroundingSpace.rowResults[0].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resSurroundingSpace.rowResults[0].itemNoSeverity, 'ERROR');
+    assert.strictEqual(resSurroundingSpace.rowResults[1].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resSurroundingSpace.rowResults[1].itemNoSeverity, 'ERROR');
+
+    // 4. Tab / multi-space -> ERROR
+    const resTab = evaluateItemNoValidation(['SKU\t100', 'PART   200'], true, rentalFalseState);
+    assert.strictEqual(resTab.rowResults[0].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resTab.rowResults[0].itemNoSeverity, 'ERROR');
+    assert.strictEqual(resTab.rowResults[1].itemNoReason, 'CONTAINS_WHITESPACE');
+    assert.strictEqual(resTab.rowResults[1].itemNoSeverity, 'ERROR');
+
+    // 5. Clean item numbers without any spaces -> VALID (no whitespace error)
+    const resCleanRental = evaluateItemNoValidation(['CYL-001-R', 'PART_99-R'], true, rentalTrueState);
+    assert.strictEqual(resCleanRental.rowResults[0].itemNoWarning, false);
+    assert.strictEqual(resCleanRental.rowResults[1].itemNoWarning, false);
+    assert.strictEqual(resCleanRental.errors.length, 0);
+
+    const resCleanNonRental = evaluateItemNoValidation(['CYL-001', 'ITEM_99', '12345'], true, rentalFalseState);
+    assert.strictEqual(resCleanNonRental.rowResults[0].itemNoWarning, false);
+    assert.strictEqual(resCleanNonRental.rowResults[1].itemNoWarning, false);
+    assert.strictEqual(resCleanNonRental.rowResults[2].itemNoWarning, false);
+    assert.strictEqual(resCleanNonRental.errors.length, 0);
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -2166,8 +2220,9 @@ testPanelRenderSafeWithEmptyValidRows();
 testSidePanelScrollThreshold();
 testPeriodicTableRecheckEvery1to2Seconds();
 testSingleFilePageActivationVsFileListSuppression();
+testItemNoWhitespaceProhibition();
 
-console.log('--- ALL 24 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 25 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 

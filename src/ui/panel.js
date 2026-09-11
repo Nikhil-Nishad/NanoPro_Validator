@@ -317,6 +317,7 @@ const NanoProPanel = (function () {
         case 'BLANK': return 'Blank';
         case 'DASH_R': return `"${value?.trim() || '-R'}" detected`;
         case 'ONLY_DASH_R': return 'Cannot be only "-R"';
+        case 'CONTAINS_WHITESPACE': return 'Cannot contain spaces/whitespace';
         case 'MISSING_DASH_R': return 'Missing "-R" suffix (Rental)';
         case 'UNEXPECTED_DASH_R': return 'Unexpected "-R" suffix (Non-Rental)';
         default: return reason || 'Unknown';
