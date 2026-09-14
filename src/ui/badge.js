@@ -102,6 +102,7 @@ const NanoProBadge = (function () {
             const refreshBtn = this.element.querySelector('.nanopro-badge-refresh');
             refreshBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                refreshBtn.classList.add('spinning');
                 if (this.onRefreshCallback) {
                     this.setState('loading');
                     this.onRefreshCallback();
@@ -134,6 +135,12 @@ const NanoProBadge = (function () {
             }
 
             this.currentState = state;
+
+            // Stop spinning animation once validation completes
+            const refreshBtn = this.element.querySelector('.nanopro-badge-refresh');
+            if (refreshBtn && state !== 'loading') {
+                refreshBtn.classList.remove('spinning');
+            }
 
             // Update class
             this.element.className = `nanopro-badge ${config.className}`;

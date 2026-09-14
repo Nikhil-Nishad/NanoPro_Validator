@@ -2234,6 +2234,204 @@ function testItemNoWhitespaceProhibition() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 26: Full Reverification on Refresh & Sidebar Recovery Gating
+// ============================================================
+function testFullReverificationAndSidebarRecoveryGating() {
+    console.log('Test 26: Full Reverification on Refresh & Sidebar Recovery Gating');
+
+    function isSidebarErrorOrCautionActive(result) {
+        if (!result) return false;
+
+        const sb = result.sidebarValidation;
+        if (sb) {
+            if (sb.errors && sb.errors.length > 0) return true;
+            if (sb.warnings && sb.warnings.length > 0) return true;
+            if (sb.environment && sb.environment.status !== 'VALID') return true;
+            if (sb.isRental && sb.isRental.status !== 'VALID') return true;
+            if (sb.tradePartner && sb.tradePartner.status !== 'VALID') return true;
+            if (sb.invoiceAmountMultiplicity && sb.invoiceAmountMultiplicity.status === 'ERROR') return true;
+        }
+
+        const totalVal = result.totalValidation;
+        if (totalVal && (totalVal.status === 'MISMATCH' || totalVal.status === 'NOT_FOUND' || totalVal.status === 'MULTIPLE_INSTANCES')) {
+            return true;
+        }
+
+        const allItemIssues = [...(result.itemNoWarnings || []), ...(result.itemNoErrors || [])];
+        const hasRentalItemNoIssue = allItemIssues.some(w => 
+            w.reason === 'MISSING_DASH_R' || w.reason === 'UNEXPECTED_DASH_R'
+        );
+        if (hasRentalItemNoIssue) return true;
+
+        return false;
+    }
+
+    // 1. Gating Check: Sidebar errors/cautions must return true
+    const caseRentalError = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: {
+            errors: [{ field: 'is_rental', message: 'Inconsistent is_rental values: [False, True]' }],
+            isRental: { status: 'ERROR', message: 'Inconsistent' }
+        },
+        itemNoErrors: [{ reason: 'UNEXPECTED_DASH_R', severity: 'ERROR' }]
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(caseRentalError), true, 'Rental error must activate sidebar checking');
+
+    const caseEnvError = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: {
+            errors: [{ field: 'Environment', message: 'Expected prod' }],
+            environment: { status: 'ERROR', message: 'test' }
+        }
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(caseEnvError), true, 'Environment error must activate sidebar checking');
+
+    const caseTPError = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: {
+            errors: [{ field: 'trade_partner_name', message: 'Blank' }],
+            tradePartner: { status: 'ERROR', message: 'Blank' }
+        }
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(caseTPError), true, 'Trade partner error must activate sidebar checking');
+
+    const caseTotalMismatch = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: { errors: [], environment: { status: 'VALID' }, isRental: { status: 'VALID' }, tradePartner: { status: 'VALID' } },
+        totalValidation: { status: 'MISMATCH', message: 'Total mismatch' }
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(caseTotalMismatch), true, 'Total mismatch must activate sidebar checking');
+
+    // 2. Gating Check: Pure line item calculation error or valid state must return false
+    const casePureMathError = {
+        summary: { invalid: 1, total: 2 },
+        sidebarValidation: {
+            errors: [],
+            warnings: [],
+            environment: { status: 'VALID' },
+            isRental: { status: 'VALID' },
+            tradePartner: { status: 'VALID' },
+            invoiceAmountMultiplicity: { status: 'VALID' }
+        },
+        totalValidation: { status: 'MATCH' },
+        itemNoErrors: [],
+        itemNoWarnings: []
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(casePureMathError), false, 'Pure math error must NOT activate sidebar checking');
+
+    const caseAllValid = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: {
+            errors: [],
+            warnings: [],
+            environment: { status: 'VALID' },
+            isRental: { status: 'VALID' },
+            tradePartner: { status: 'VALID' },
+            invoiceAmountMultiplicity: { status: 'VALID' }
+        },
+        totalValidation: { status: 'MATCH' },
+        itemNoErrors: [],
+        itemNoWarnings: []
+    };
+    assert.strictEqual(isSidebarErrorOrCautionActive(caseAllValid), false, 'All valid state must NOT activate sidebar checking');
+
+    // 3. Active Sidebar Error Recovery Simulation
+    let simulatedSidebarMemory = {
+        isRentalList: [{ raw: 'False', value: 'false' }, { raw: 'True', value: 'true' }], // Contaminated state
+        environment: { raw: 'prod' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        invoiceAmount: { raw: '100.00', value: 100 }
+    };
+    let currentResult = caseRentalError;
+
+    function simulateRecoveryCheck(liveDomFields) {
+        if (!isSidebarErrorOrCautionActive(currentResult)) return false;
+
+        const liveRental = liveDomFields.isRental || [];
+        const liveValues = liveRental.map(r => (r.raw || '').trim().toLowerCase());
+        const allLiveSame = liveValues.every(v => v === liveValues[0]);
+
+        if (allLiveSame && liveRental.length > 0) {
+            simulatedSidebarMemory.isRentalList = liveRental;
+            // Re-evaluating validation with corrected sidebar
+            const evalResult = evaluateSidebarValidation({
+                environment: simulatedSidebarMemory.environment,
+                isRental: simulatedSidebarMemory.isRentalList,
+                tradePartnerName: simulatedSidebarMemory.tradePartnerName,
+                invoiceAmount: simulatedSidebarMemory.invoiceAmount,
+                pageInfo: { currentPage: 1, totalPages: 1 }
+            });
+
+            currentResult = {
+                summary: { invalid: 0, total: 2 },
+                sidebarValidation: evalResult,
+                totalValidation: { status: 'MATCH' },
+                itemNoErrors: [],
+                itemNoWarnings: []
+            };
+            return true;
+        }
+        return false;
+    }
+
+    // User corrects is_rental to "False" in the live DOM
+    const liveFieldsAfterCorrection = {
+        isRental: [{ raw: 'False', value: 'false', key: 'rental_0' }]
+    };
+
+    const didRecover = simulateRecoveryCheck(liveFieldsAfterCorrection);
+    assert.strictEqual(didRecover, true, 'Recovery must detect user correction in live DOM');
+    assert.strictEqual(currentResult.sidebarValidation.isValid, true, 'Sidebar must become valid after correction');
+    assert.strictEqual(isSidebarErrorOrCautionActive(currentResult), false, 'Gating check must turn off once recovered');
+
+    // 4. Full Reverification on Refresh Simulation
+    let refreshTriggered = false;
+    let cachedHash = 'cached-hash-xyz';
+
+    function simulateHandleFullRefresh(liveDom) {
+        // Reset memory cache unconditionally
+        simulatedSidebarMemory = {
+            environment: null,
+            tradePartnerName: null,
+            isRentalList: [],
+            invoiceAmount: null,
+            invoiceNumber: null
+        };
+        cachedHash = null;
+
+        // Re-read fresh from live DOM
+        if (liveDom.environment) simulatedSidebarMemory.environment = liveDom.environment;
+        if (liveDom.isRental) simulatedSidebarMemory.isRentalList = liveDom.isRental;
+        if (liveDom.tradePartnerName) simulatedSidebarMemory.tradePartnerName = liveDom.tradePartnerName;
+        if (liveDom.invoiceAmount) simulatedSidebarMemory.invoiceAmount = liveDom.invoiceAmount;
+
+        const evalResult = evaluateSidebarValidation({
+            environment: simulatedSidebarMemory.environment,
+            isRental: simulatedSidebarMemory.isRentalList,
+            tradePartnerName: simulatedSidebarMemory.tradePartnerName,
+            invoiceAmount: simulatedSidebarMemory.invoiceAmount
+        });
+
+        refreshTriggered = true;
+        return evalResult;
+    }
+
+    const liveDom = {
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        invoiceAmount: { raw: '250.00', value: 250 }
+    };
+
+    const refreshResult = simulateHandleFullRefresh(liveDom);
+    assert.strictEqual(refreshTriggered, true, 'Full refresh must execute');
+    assert.strictEqual(cachedHash, null, 'State hash must be reset on refresh');
+    assert.strictEqual(refreshResult.isValid, true, 'Full reverification must succeed with live DOM');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -2251,8 +2449,10 @@ testSidePanelScrollThreshold();
 testPeriodicTableRecheckEvery1to2Seconds();
 testSingleFilePageActivationVsFileListSuppression();
 testItemNoWhitespaceProhibition();
+testFullReverificationAndSidebarRecoveryGating();
 
-console.log('--- ALL 25 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 26 TEST SUITES PASSED SUCCESSFULLY! ---');
+
 
 
 

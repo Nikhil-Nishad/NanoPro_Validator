@@ -290,3 +290,6 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 | **R19** | MultiPage | Total Placement | `invoice_amount` only on last page ($p = Y$) | Earlier page pending total verification | `invoice_amount` present on earlier page ($p < Y$) |
 | **R20** | MultiPage | Table-less Pages | 0 rows, $\$0.00$ sum recorded cleanly without crash | — | — |
 | **R21** | UI | Design System | Zero purple/violet tokens; Slate, Emerald, Coral, Amber | — | — |
+| **R22** | Refresh | Full Reverification | Wipes all cached memory, resets hashes, re-scans live DOM fresh upon badge/panel refresh, toolbar click, or browser refresh | — | Stale memory bypasses prevented |
+| **R23** | Recovery | Active Sidebar Watcher | Continuously rechecks live DOM when in sidebar error/caution; immediately recovers to Verified upon field correction; reacts within 150ms to sidebar edits | — | Polling gated: inert when verified or on table-only math errors |
+

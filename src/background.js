@@ -23,11 +23,11 @@ chrome.commands.onCommand.addListener((command) => {
     });
 });
 
-// Handle extension icon click
+// Handle extension icon click in browser toolbar/extensions menu -> Reverify everything
 chrome.action.onClicked.addListener((tab) => {
     chrome.tabs.sendMessage(tab.id, {
         type: 'NANOPRO_COMMAND',
-        command: 'start-selection'
+        command: 'refresh-validation'
     }).catch(err => {
         console.log('[NanoPro Background] Content script not loaded:', err.message);
     });

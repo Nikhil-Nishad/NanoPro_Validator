@@ -18,6 +18,7 @@ const NanoProPanel = (function () {
       this.element = null;
       this.isOpen = false;
       this.lastResults = null;
+      this.onRefreshCallback = null;
     }
 
     /**
@@ -33,15 +34,35 @@ const NanoProPanel = (function () {
       this.element.innerHTML = `
         <div class="nanopro-panel-header">
           <span class="nanopro-panel-title">NanoPro Validator</span>
-          <button class="nanopro-panel-close" title="Close">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
+          <div class="nanopro-panel-header-actions">
+            <button class="nanopro-panel-refresh" title="Reverify everything">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+            </button>
+            <button class="nanopro-panel-close" title="Close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="nanopro-panel-body"></div>
       `;
+
+      // Refresh button handler
+      const refreshBtn = this.element.querySelector('.nanopro-panel-refresh');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+          refreshBtn.classList.add('spinning');
+          if (this.onRefreshCallback) {
+            this.onRefreshCallback();
+          }
+        });
+      }
 
       // Close button handler
       const closeBtn = this.element.querySelector('.nanopro-panel-close');
@@ -91,6 +112,9 @@ const NanoProPanel = (function () {
      */
     render(validationResult) {
       if (!this.element) return;
+
+      const refreshBtn = this.element.querySelector('.nanopro-panel-refresh');
+      if (refreshBtn) refreshBtn.classList.remove('spinning');
 
       this.lastResults = validationResult;
       const body = this.element.querySelector('.nanopro-panel-body');
@@ -602,6 +626,13 @@ const NanoProPanel = (function () {
     }
 
     /**
+     * Set refresh callback
+     */
+    onRefresh(callback) {
+      this.onRefreshCallback = callback;
+    }
+
+    /**
      * Remove panel
      */
     remove() {
@@ -623,6 +654,7 @@ const NanoProPanel = (function () {
     close: () => panel.close(),
     toggle: () => panel.toggle(),
     render: (results) => panel.render(results),
+    onRefresh: (callback) => panel.onRefresh(callback),
     isOpen: () => panel.getIsOpen(),
     remove: () => panel.remove()
   };

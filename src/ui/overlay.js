@@ -298,6 +298,13 @@ const NanoProOverlay = (function () {
       color: #1e293b;
     }
 
+    .nanopro-panel-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .nanopro-panel-refresh,
     .nanopro-panel-close {
       display: flex;
       align-items: center;
@@ -312,9 +319,20 @@ const NanoProOverlay = (function () {
       transition: all 0.2s ease;
     }
 
+    .nanopro-panel-refresh:hover,
     .nanopro-panel-close:hover {
       background: #e2e8f0;
       color: #1e293b;
+    }
+
+    .nanopro-badge-refresh.spinning,
+    .nanopro-panel-refresh.spinning {
+      animation: nanoproSpin 0.6s linear infinite;
+    }
+
+    @keyframes nanoproSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
 
     .nanopro-panel-body {

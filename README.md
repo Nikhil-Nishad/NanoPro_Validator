@@ -47,6 +47,12 @@
    - Automatically detects when the reviewer scrolls the sidebar by 40% or more, capturing virtualized fields that mounted into view.
 7. **Multi-Page Error Tracking**:
    - Accurately tracks which specific pages in a multi-page document have errors and displays pills (e.g. `❌ P1, P3 Errors`).
+8. **Full Reverification on Refresh**:
+   - Clicking the refresh button in the badge, panel header, browser toolbar extension icon, or refreshing the browser page flushes all cached memory, resets hashes, re-scans the live DOM from scratch, and re-validates with animated rotating refresh icons.
+9. **Active Sidebar Error Recovery Watcher & Instant Field Reactivity**:
+   - **Edge Case Recovery**: When the extension is in an ERROR or CAUTION state due to sidebar items or rules (such as `is_rental Error | Item_No Error`), an active watcher checks the live DOM to detect if the reviewer corrected the field. Once corrected, it immediately flips to Verified and turns off further polling.
+   - **Strict Gating**: The active sidebar recovery watcher is strictly gated: it remains inert when the document is already Verified or when the only error is a line item table calculation mismatch.
+   - **Instant Field Reactivity**: Captures typing, dropdown selections (`[role="option"]`, `MuiMenuItem-root`, etc.), and focus changes across both table cells and sidebar fields, re-validating live within 150ms.
 
 ---
 
@@ -69,7 +75,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 25 validation test suites)
+# Run the automated test suite (all 26 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

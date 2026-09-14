@@ -186,24 +186,36 @@
             }
         }
 
-        // 4. is_rental (accumulate unique instances seen while scrolling)
+        // 4. is_rental (update existing instances and remember across scrolling)
         if (live.isRental && live.isRental.length > 0) {
-            const existingKeys = new Set((sidebarMemory.isRentalList || []).map((item, idx) => item.key || `item_${idx}_${item.raw}`));
-            let addedNew = false;
-            const updatedList = [...(sidebarMemory.isRentalList || [])];
+            const liveValues = live.isRental.map(r => (r.raw || '').trim().toLowerCase());
+            const allLiveSame = liveValues.every(v => v === liveValues[0]);
 
-            live.isRental.forEach((item, idx) => {
-                const k = item.key || `item_${updatedList.length}_${item.raw}`;
-                if (!existingKeys.has(k)) {
-                    existingKeys.add(k);
-                    updatedList.push({ ...item, isRemembered: false });
-                    addedNew = true;
+            // If all live instances currently in DOM have the same value (e.g. user updated to 'false' or 'true'),
+            // discard any old remembered contradictory values!
+            if (allLiveSame && live.isRental.length > 0) {
+                const prevStr = (sidebarMemory.isRentalList || []).map(r => (r.raw || '').trim().toLowerCase()).join(',');
+                const newStr = liveValues.join(',');
+                if (prevStr !== newStr) {
+                    sidebarMemory.isRentalList = live.isRental.map(r => ({ ...r, isRemembered: false }));
+                    hasChanges = true;
                 }
-            });
-
-            if (addedNew) {
+            } else {
+                const updatedList = [...(sidebarMemory.isRentalList || [])];
+                live.isRental.forEach((item, idx) => {
+                    const k = item.key || `rental_idx_${idx}`;
+                    const existingIdx = updatedList.findIndex((existing, eIdx) => (existing.key || `rental_idx_${eIdx}`) === k);
+                    if (existingIdx >= 0) {
+                        if (updatedList[existingIdx].raw !== item.raw) {
+                            updatedList[existingIdx] = { ...item, isRemembered: false };
+                            hasChanges = true;
+                        }
+                    } else {
+                        updatedList.push({ ...item, isRemembered: false });
+                        hasChanges = true;
+                    }
+                });
                 sidebarMemory.isRentalList = updatedList;
-                hasChanges = true;
             }
         }
 
@@ -440,12 +452,15 @@
         NanoProPanel.create(container);
 
         // Set up badge interactions
-        NanoProBadge.onRefresh(handleRefresh);
+        NanoProBadge.onRefresh(handleFullRefresh);
+        if (NanoProPanel.onRefresh) {
+            NanoProPanel.onRefresh(handleFullRefresh);
+        }
         NanoProBadge.onClick(() => {
             if (validationResult && validationResult.summary) {
                 NanoProPanel.toggle();
             } else {
-                handleRefresh();
+                handleFullRefresh();
             }
         });
 
@@ -638,18 +653,137 @@
     }
 
     /**
-     * Start continuous 1-2 second periodic table recheck
-     * Continuously re-scans and validates the table every 1.5 seconds so edits,
-     * cell corrections, and state updates reflect automatically.
+     * Start continuous 1-2 second periodic table recheck & sidebar error recovery.
+     * Continuously re-scans and validates the table every 1.5 seconds, and actively checks
+     * if sidebar errors/cautions have been fixed in the live DOM.
      */
     function startTablePolling() {
         if (tablePollTimer) return; // Keep existing active timer running
         tablePollTimer = setInterval(() => {
-            if (currentMode === 'auto' && isSingleFilePage()) {
-                runAutoDetection(0, true /* isBackgroundPoll */);
+            if (isSingleFilePage()) {
+                if (currentMode === 'auto') {
+                    runAutoDetection(0, true /* isBackgroundPoll */);
+                }
+                // Edge case: actively recheck if sidebar error/caution is fixed
+                checkSidebarErrorRecovery();
             }
         }, CONFIG.tableRecheckInterval);
-        console.log(`[NanoPro v3] Continuous table recheck timer active (${CONFIG.tableRecheckInterval}ms interval)`);
+        console.log(`[NanoPro v4] Continuous table recheck & sidebar recovery timer active (${CONFIG.tableRecheckInterval}ms interval)`);
+    }
+
+    /**
+     * Check if the current validation result has errors or cautions due to sidebar items or rules.
+     * This ensures active sidebar polling ONLY runs when needed.
+     */
+    function isSidebarErrorOrCautionActive(result) {
+        if (!result) return false;
+
+        // 1. Direct sidebar errors or cautions
+        const sb = result.sidebarValidation;
+        if (sb) {
+            if (sb.errors && sb.errors.length > 0) return true;
+            if (sb.warnings && sb.warnings.length > 0) return true;
+            if (sb.environment && sb.environment.status !== 'VALID') return true;
+            if (sb.isRental && sb.isRental.status !== 'VALID') return true;
+            if (sb.tradePartner && sb.tradePartner.status !== 'VALID') return true;
+            if (sb.invoiceAmountMultiplicity && sb.invoiceAmountMultiplicity.status === 'ERROR') return true;
+        }
+
+        // 2. Invoice total validation (which depends on sidebar invoice_amount)
+        const totalVal = result.totalValidation;
+        if (totalVal && (totalVal.status === 'MISMATCH' || totalVal.status === 'NOT_FOUND' || totalVal.status === 'MULTIPLE_INSTANCES')) {
+            return true;
+        }
+
+        // 3. Item_No rental cross-validation issues (which depend on sidebar is_rental)
+        const allItemIssues = [...(result.itemNoWarnings || []), ...(result.itemNoErrors || [])];
+        const hasRentalItemNoIssue = allItemIssues.some(w => 
+            w.reason === 'MISSING_DASH_R' || w.reason === 'UNEXPECTED_DASH_R'
+        );
+        if (hasRentalItemNoIssue) return true;
+
+        return false;
+    }
+
+    /**
+     * Edge case: Keep rechecking if the error on the sidebar is fixed.
+     * ONLY works if the extension is in error or caution state due to sidebar items or rules.
+     */
+    function checkSidebarErrorRecovery() {
+        if (!isSingleFilePage()) return;
+        if (!isSidebarErrorOrCautionActive(validationResult)) {
+            return; // Strict rule: only work if in error or caution state due to sidebar items or rules
+        }
+
+        if (typeof NanoProAutoDetector === 'undefined' || !NanoProAutoDetector.findSidebarFields) return;
+
+        const live = NanoProAutoDetector.findSidebarFields();
+        if (!live) return;
+
+        let hasCorrection = false;
+
+        // 1. Environment correction: was not valid, check if live is now prod or changed
+        const curEnv = sidebarMemory.environment?.raw?.trim().toLowerCase();
+        const liveEnv = live.environment?.raw?.trim().toLowerCase();
+        if (curEnv !== 'prod' && liveEnv === 'prod') {
+            hasCorrection = true;
+        } else if (liveEnv && liveEnv !== curEnv) {
+            hasCorrection = true;
+        }
+
+        // 2. Trade Partner Name correction: was invalid/blank, check if live is now >= 2 chars or changed
+        const curTP = sidebarMemory.tradePartnerName?.raw?.trim() || '';
+        const liveTP = live.tradePartnerName?.raw?.trim() || '';
+        if (curTP.length < 2 && liveTP.length >= 2) {
+            hasCorrection = true;
+        } else if (liveTP && liveTP !== curTP) {
+            hasCorrection = true;
+        }
+
+        // 3. is_rental correction: count or values changed
+        const curRentalList = sidebarMemory.isRentalList || [];
+        const liveRentalList = live.isRental || [];
+        if (liveRentalList.length !== curRentalList.length) {
+            hasCorrection = true;
+        } else if (liveRentalList.length > 0) {
+            const curStr = curRentalList.map(r => r.raw?.trim()).join(',');
+            const liveStr = liveRentalList.map(r => r.raw?.trim()).join(',');
+            if (curStr !== liveStr) {
+                hasCorrection = true;
+            }
+        }
+
+        // 4. invoice_amount correction: raw amount or multiplicity changed
+        const curInvRaw = sidebarMemory.invoiceAmount?.raw?.trim();
+        const liveInvRaw = live.invoiceAmount?.raw?.trim();
+        const curInvMult = !!sidebarMemory.invoiceAmount?.multiple;
+        const liveInvMult = !!live.invoiceAmount?.multiple;
+        if ((!curInvRaw && liveInvRaw) || (curInvRaw !== liveInvRaw) || (curInvMult !== liveInvMult)) {
+            hasCorrection = true;
+        }
+
+        // 5. invoice_number change
+        const curInvNum = sidebarMemory.invoiceNumber?.value;
+        const liveInvNum = live.invoiceNumber?.value;
+        if (liveInvNum && liveInvNum !== curInvNum) {
+            hasCorrection = true;
+        }
+
+        if (hasCorrection) {
+            console.log('[NanoPro v4] Sidebar error correction detected in DOM! Re-evaluating validation...');
+            scanAndRememberSidebarFields();
+            lastDetectedStateHash = null;
+
+            if (currentMode === 'auto') {
+                runAutoDetection(0, true /* isBackgroundPoll */, true /* force */);
+            } else if (lastSelection) {
+                processSelection(lastSelection);
+            } else if (validationResult) {
+                const currentRows = validationResult.results ? 
+                    validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
+                processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
+            }
+        }
     }
 
     /**
@@ -1578,28 +1712,41 @@
     let inputDebounceTimer = null;
 
     function handleUserInput(e) {
-        if (currentMode !== 'auto' && !validationResult) return;
         const target = e.target;
         if (!target) return;
 
-        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-        if (!isInput) return;
-
         // Ignore events from our own extension overlay
-        if (target.closest && (target.closest('.nanopro-badge') || target.closest('.nanopro-panel'))) {
+        if (target.closest && (target.closest('.nanopro-badge') || target.closest('.nanopro-panel') || target.closest('#nanopro-root'))) {
             return;
         }
 
-        // Fast debounce: re-validate 200ms after user edits any cell
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        const isClickableOption = e.type === 'click' && !!(
+            target.closest && target.closest('[role="option"], [role="menuitem"], .MuiMenuItem-root, [data-testid*="option"], [data-testid*="select"], [data-testid*="dropdown"], [class*="dropdown" i], [role="combobox"], [data-testid*="label_box_div"], .ocr_text, [role="button"]')
+        );
+        const isBlurEvent = e.type === 'blur' || e.type === 'focusout';
+
+        if (!isInput && !isClickableOption && !isBlurEvent && e.type !== 'change') {
+            return;
+        }
+
+        // Fast debounce: re-validate 150ms after user edits any cell or updates any sidebar field
         if (inputDebounceTimer) clearTimeout(inputDebounceTimer);
         inputDebounceTimer = setTimeout(() => {
-            console.log('[NanoPro] User input detected in table cell, re-validating...');
+            console.log('[NanoPro v4] User input or field update detected, re-validating live...');
+            scanAndRememberSidebarFields();
+            lastDetectedStateHash = null;
+
             if (currentMode === 'auto') {
-                runAutoDetection(0, false, true); // force = true to recalculate immediately
+                runAutoDetection(0, false, true /* force */);
             } else if (validationResult && lastSelection) {
                 processSelection(lastSelection);
+            } else if (validationResult) {
+                const currentRows = validationResult.results ? 
+                    validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
+                processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
             }
-        }, 200);
+        }, 150);
     }
 
     function setupInputListeners() {
@@ -1607,8 +1754,10 @@
         document.addEventListener('input', handleUserInput, true);
         document.addEventListener('change', handleUserInput, true);
         document.addEventListener('paste', handleUserInput, true);
+        document.addEventListener('click', handleUserInput, true);
+        document.addEventListener('focusout', handleUserInput, true);
         inputListenersAttached = true;
-        console.log('[NanoPro] Reactive table input listeners attached');
+        console.log('[NanoPro v4] Reactive table & sidebar input/update listeners attached');
     }
 
     function teardownInputListeners() {
@@ -1616,22 +1765,81 @@
         document.removeEventListener('input', handleUserInput, true);
         document.removeEventListener('change', handleUserInput, true);
         document.removeEventListener('paste', handleUserInput, true);
+        document.removeEventListener('click', handleUserInput, true);
+        document.removeEventListener('focusout', handleUserInput, true);
         inputListenersAttached = false;
     }
 
     // ────────────────────────────────────────────────────────
-    // MANUAL MODE (unchanged from v1)
+    // FULL REVERIFICATION & MANUAL MODE
     // ────────────────────────────────────────────────────────
 
     /**
-     * Handle refresh/badge click action based on mode
+     * Reverify everything from scratch:
+     * - Resets remembered sidebar cache so live DOM is queried
+     * - Resets state hash & validation results
+     * - Animates badge & panel refresh buttons with spinning animation
+     * - Re-scans sidebar fields live
+     * - Re-runs table detection/validation with force=true
+     * - Updates badge and panel
+     */
+    async function handleFullRefresh() {
+        console.log('[NanoPro v4] Full reverification triggered...');
+
+        // 1. Visual feedback: animate refresh icons on badge and panel
+        const shadow = typeof NanoProOverlay !== 'undefined' && NanoProOverlay.getShadow ? NanoProOverlay.getShadow() : null;
+        const badgeRefreshBtn = shadow ? shadow.querySelector('.nanopro-badge-refresh') : document.querySelector('.nanopro-badge-refresh');
+        const panelRefreshBtn = shadow ? shadow.querySelector('.nanopro-panel-refresh') : document.querySelector('.nanopro-panel-refresh');
+        if (badgeRefreshBtn) badgeRefreshBtn.classList.add('spinning');
+        if (panelRefreshBtn) panelRefreshBtn.classList.add('spinning');
+
+        // Set badge to loading state immediately
+        NanoProBadge.setLoading();
+
+        // 2. UNCONDITIONALLY RESET ALL CACHED MEMORY
+        sidebarMemory = {
+            instanceHash: window.location.hash,
+            environment: null,
+            tradePartnerName: null,
+            isRentalList: [],
+            invoiceAmount: null,
+            invoiceNumber: null,
+            pageInfo: null
+        };
+        lastDetectedStateHash = null;
+        validationResult = null;
+
+        // 3. Scan sidebar live from DOM
+        scanAndRememberSidebarFields();
+
+        // 4. Force run validation based on current mode
+        try {
+            if (currentMode === 'auto') {
+                await runAutoDetection(0, false, true /* force */);
+            } else if (lastSelection) {
+                processSelection(lastSelection);
+            } else {
+                startSelectionMode();
+            }
+        } finally {
+            // Stop spinning animation after 350ms
+            setTimeout(() => {
+                if (badgeRefreshBtn) badgeRefreshBtn.classList.remove('spinning');
+                if (panelRefreshBtn) panelRefreshBtn.classList.remove('spinning');
+            }, 350);
+
+            // Re-render open panel with fresh validationResult if open
+            if (typeof NanoProPanel !== 'undefined' && NanoProPanel.isOpen && NanoProPanel.isOpen() && validationResult) {
+                NanoProPanel.render(validationResult);
+            }
+        }
+    }
+
+    /**
+     * Handle refresh action (calls full reverification)
      */
     function handleRefresh() {
-        if (currentMode === 'auto') {
-            runAutoDetection(0, false, true);
-        } else {
-            startSelectionMode();
-        }
+        handleFullRefresh();
     }
 
     /**
@@ -2194,6 +2402,8 @@
     window.NanoPro = {
         select: startSelectionMode,
         autoDetect: runAutoDetection,
+        refresh: handleFullRefresh,
+        reverify: handleFullRefresh,
         getResult: () => validationResult,
         getLastSelection: () => lastSelection,
         getMode: () => currentMode,
@@ -2214,7 +2424,9 @@
             captureRegion: (sel) => NanoProCapture.extractTextFromRegion(sel || lastSelection),
             parseTable: (texts) => NanoProTableParser.parseTable(texts),
             detectTable: () => NanoProAutoDetector.detect(),
-            diagnose: () => NanoProAutoDetector.diagnose()
+            diagnose: () => NanoProAutoDetector.diagnose(),
+            checkRecovery: () => checkSidebarErrorRecovery(),
+            isSidebarError: () => isSidebarErrorOrCautionActive(validationResult)
         }
     };
 
@@ -2224,6 +2436,14 @@
         
         setupNavigationWatcher();
         handleNavigation(); // Trigger initial page load check
+
+        // Reverify everything if browser page is refreshed (bfcache or page show)
+        window.addEventListener('pageshow', (event) => {
+            if (isSingleFilePage()) {
+                console.log('[NanoPro v4] Page show event detected. Full reverification...');
+                setTimeout(handleFullRefresh, 150);
+            }
+        });
     }
 
     // Initialize when DOM is ready
@@ -2233,12 +2453,12 @@
         setTimeout(boot, 100);
     }
 
-    console.log('[NanoPro v3] Content script loaded');
+    console.log('[NanoPro v4] Content script loaded');
 
     // Listen for keyboard shortcut commands from background script
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.type === 'NANOPRO_COMMAND') {
-            console.log('[NanoPro v2] Received command:', message.command);
+            console.log('[NanoPro v4] Received command:', message.command);
 
             switch (message.command) {
                 case 'start-selection':
@@ -2248,11 +2468,13 @@
                     if (validationResult) {
                         NanoProPanel.toggle();
                     } else {
-                        handleRefresh();
+                        handleFullRefresh();
                     }
                     break;
                 case 'reset-extension':
-                    resetState();
+                case 'refresh-validation':
+                case 'refresh':
+                    handleFullRefresh();
                     break;
                 case 'toggle-mode':
                     toggleMode();
