@@ -49,11 +49,15 @@
    - Accurately tracks which specific pages in a multi-page document have errors and displays pills (e.g. `❌ P1, P3 Errors`).
 8. **Full Reverification on Refresh**:
    - Clicking the refresh button in the badge, panel header, browser toolbar extension icon, or refreshing the browser page flushes all cached memory, resets hashes, re-scans the live DOM from scratch, and re-validates with animated rotating refresh icons.
+   - Restarts all background watchers and mutation observers, and runs an immediate post-refresh rewatch check.
 9. **Active Sidebar Error Recovery Watcher & Auto Turn-Off Lifecycle**:
-   - **Edge Case Recovery**: When the extension is in an ERROR or CAUTION state due to sidebar items or rules (such as `is_rental Error | Item_No Error`), an active watcher checks the live DOM to detect if the reviewer corrected the field.
+   - **Edge Case Recovery**: When the extension is in an ERROR or CAUTION state due to sidebar items or rules (such as `is_rental Error | Item_No Error` or `Environment Error`), an active watcher checks the live DOM to detect if the reviewer corrected the field.
    - **Auto Turn-Off on Correction**: As soon as all details are corrected, the extension transitions to `VERIFIED` and auto turns off active recovery polling to minimize resource usage.
    - **Re-Edit & Re-Watch Engagement**: If the reviewer subsequently edits or changes any sidebar field once again, the extension immediately re-watches and re-validates. If an error is reintroduced, active recovery seamlessly re-engages!
    - **Instant Field Reactivity**: Captures typing, dropdown selections (`[role="option"]`, `MuiMenuItem-root`, etc.), and focus changes across both table cells and sidebar fields, re-validating live within 150ms.
+10. **Multi-Strategy Resilient Environment Extraction**:
+   - Multi-strategy detection guarantees `Environment` extraction across dedicated inputs (`input[name*="environment"]`), `data-testid` elements with adjacent sibling value boxes, and label scans across all element types with punctuation stripping (colons, asterisks).
+   - Prevents label collisions and eliminates false Environment error locks.
 
 ---
 
@@ -76,7 +80,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 27 validation test suites)
+# Run the automated test suite (all 28 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 
