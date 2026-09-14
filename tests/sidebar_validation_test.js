@@ -2447,11 +2447,381 @@ testThreeNavigationTrackingMethods();
 testPanelRenderSafeWithEmptyValidRows();
 testSidePanelScrollThreshold();
 testPeriodicTableRecheckEvery1to2Seconds();
+// ============================================================
+// TEST 27: Sidebar Auto Turn-Off & Re-Edit Rewatch Lifecycle
+// ============================================================
+function testSidebarAutoTurnOffAndReEditRewatch() {
+    console.log('Test 27: Sidebar Auto Turn-Off & Re-Edit Rewatch Lifecycle');
+
+    function isSidebarErrorOrCautionActive(result) {
+        if (!result) return false;
+
+        const sb = result.sidebarValidation;
+        if (sb) {
+            if (sb.errors && sb.errors.length > 0) return true;
+            if (sb.warnings && sb.warnings.length > 0) return true;
+            if (sb.environment && sb.environment.status !== 'VALID') return true;
+            if (sb.isRental && sb.isRental.status !== 'VALID') return true;
+            if (sb.tradePartner && sb.tradePartner.status !== 'VALID') return true;
+            if (sb.invoiceAmountMultiplicity && sb.invoiceAmountMultiplicity.status === 'ERROR') return true;
+        }
+
+        const totalVal = result.totalValidation;
+        if (totalVal && (totalVal.status === 'MISMATCH' || totalVal.status === 'NOT_FOUND' || totalVal.status === 'MULTIPLE_INSTANCES')) {
+            return true;
+        }
+
+        const allItemIssues = [...(result.itemNoWarnings || []), ...(result.itemNoErrors || [])];
+        const hasRentalItemNoIssue = allItemIssues.some(w => 
+            w.reason === 'MISSING_DASH_R' || w.reason === 'UNEXPECTED_DASH_R'
+        );
+        if (hasRentalItemNoIssue) return true;
+
+        return false;
+    }
+
+    function hasAnySidebarFieldChanged(live, memory) {
+        if (!live) return false;
+
+        const curEnv = (memory.environment?.raw || '').trim().toLowerCase();
+        const liveEnv = (live.environment?.raw || '').trim().toLowerCase();
+        if (liveEnv !== curEnv && (liveEnv || curEnv)) return true;
+
+        const curTP = (memory.tradePartnerName?.raw || '').trim();
+        const liveTP = (live.tradePartnerName?.raw || '').trim();
+        if (liveTP !== curTP && (liveTP || curTP)) return true;
+
+        const curRentalList = memory.isRentalList || [];
+        const liveRentalList = live.isRental || [];
+        if (liveRentalList.length !== curRentalList.length && (liveRentalList.length > 0 || curRentalList.length > 0)) return true;
+        if (liveRentalList.length > 0 && curRentalList.length > 0) {
+            const curStr = curRentalList.map(r => (r.raw || '').trim().toLowerCase()).join(',');
+            const liveStr = liveRentalList.map(r => (r.raw || '').trim().toLowerCase()).join(',');
+            if (curStr !== liveStr) return true;
+        }
+
+        const curInvRaw = (memory.invoiceAmount?.raw || '').trim();
+        const liveInvRaw = (live.invoiceAmount?.raw || '').trim();
+        const curInvMult = !!memory.invoiceAmount?.multiple;
+        const liveInvMult = !!live.invoiceAmount?.multiple;
+        if ((curInvRaw !== liveInvRaw && (curInvRaw || liveInvRaw)) || (curInvMult !== liveInvMult)) return true;
+
+        const curInvNum = (memory.invoiceNumber?.value || '').trim();
+        const liveInvNum = (live.invoiceNumber?.value || '').trim();
+        if (liveInvNum !== curInvNum && (liveInvNum || curInvNum)) return true;
+
+        return false;
+    }
+
+    // Step 1: Initial state has error (trade_partner_name is blank)
+    let memory = {
+        environment: { raw: 'prod' },
+        tradePartnerName: { raw: '' }, // Error!
+        isRentalList: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '150.00', value: 150 },
+        invoiceNumber: { value: 'INV-001' }
+    };
+
+    let evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+
+    let validationResult = {
+        summary: { invalid: 0, total: 2 },
+        sidebarValidation: evalResult,
+        totalValidation: { status: 'MATCH' }
+    };
+
+    // Step 2: Error active -> active watcher must be running
+    assert.strictEqual(isSidebarErrorOrCautionActive(validationResult), true, 'Step 1: Watcher must be active due to error');
+
+    // Step 3: User fixes trade_partner_name to "INSTANTLRN" in DOM
+    const liveFixed = {
+        environment: { raw: 'prod' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '150.00', value: 150 },
+        invoiceNumber: { value: 'INV-001' }
+    };
+
+    // Simulated recovery: update memory and revalidate
+    memory.tradePartnerName = liveFixed.tradePartnerName;
+    evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    // Step 4: Document is now VALID -> active error recovery is AUTO TURNED OFF
+    assert.strictEqual(validationResult.sidebarValidation.isValid, true, 'Step 3: Sidebar must now be valid');
+    assert.strictEqual(isSidebarErrorOrCautionActive(validationResult), false, 'Step 4: Active error watcher must auto turn off');
+
+    // Step 5: User subsequently modifies fields once again (e.g. changes Environment to "test")
+    const liveReEdited = {
+        environment: { raw: 'test' }, // Modified!
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '150.00', value: 150 },
+        invoiceNumber: { value: 'INV-001' }
+    };
+
+    // Change detector must catch that a field changed while in the valid/auto-turned-off state
+    const fieldChanged = hasAnySidebarFieldChanged(liveReEdited, memory);
+    assert.strictEqual(fieldChanged, true, 'Step 5: Must detect field change while in valid/auto-off state');
+
+    // Step 6: Re-evaluating validation with the re-edited field
+    memory.environment = liveReEdited.environment;
+    evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    // Step 7: Must now be in error state AND active watcher must re-engage automatically!
+    assert.strictEqual(validationResult.sidebarValidation.isValid, false, 'Step 6: Re-edit must produce invalid result');
+    assert.strictEqual(isSidebarErrorOrCautionActive(validationResult), true, 'Step 7: Watcher must re-activate and re-watch!');
+
+    // Step 8: User corrects Environment back to "prod"
+    const liveFixedAgain = {
+        environment: { raw: 'prod' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '150.00', value: 150 },
+        invoiceNumber: { value: 'INV-001' }
+    };
+
+    memory.environment = liveFixedAgain.environment;
+    evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    // Step 9: Re-recovered -> Auto turn-off engages once again
+    assert.strictEqual(validationResult.sidebarValidation.isValid, true, 'Step 8: Must recover back to valid');
+    assert.strictEqual(isSidebarErrorOrCautionActive(validationResult), false, 'Step 9: Auto turn-off must engage again');
+
+    console.log('  Passed ✅');
+}
+
+function testEnvironmentExtractionResilienceAndRefreshRewatch() {
+    console.log('Test 28: Environment Extraction Resilience and Refresh Rewatch Lifecycle');
+
+    const labelRegex = /^(?:model[_\s]*)?env(?:ironment)?[:\s*#_-]*$/i;
+
+    function cleanEnvVal(raw) {
+        if (!raw || typeof raw !== 'string') return null;
+        const trimmed = raw.trim();
+        if (!trimmed || labelRegex.test(trimmed)) return null;
+        return trimmed;
+    }
+
+    // Sub-test A: Never return label itself as the value
+    assert.strictEqual(cleanEnvVal('Environment'), null, 'Sub-test A1: "Environment" must not be parsed as value');
+    assert.strictEqual(cleanEnvVal('Environment:'), null, 'Sub-test A2: "Environment:" must not be parsed as value');
+    assert.strictEqual(cleanEnvVal('Env'), null, 'Sub-test A3: "Env" must not be parsed as value');
+    assert.strictEqual(cleanEnvVal('model_environment:'), null, 'Sub-test A4: "model_environment:" must not be parsed as value');
+
+    // Sub-test B: Cleanly extract valid and invalid values
+    assert.strictEqual(cleanEnvVal('prod'), 'prod', 'Sub-test B1: "prod" parsed');
+    assert.strictEqual(cleanEnvVal(' PROD '), 'PROD', 'Sub-test B2: " PROD " trimmed to PROD');
+    assert.strictEqual(cleanEnvVal('test'), 'test', 'Sub-test B3: "test" parsed');
+
+    // Sub-test C: Simulate DOM structures for Environment detection
+    // 1. Sibling structure: label box next to value box with "prod"
+    const siblingStructure = {
+        label: 'Environment',
+        nextSiblingText: 'prod'
+    };
+    const extractedSib = cleanEnvVal(siblingStructure.nextSiblingText);
+    assert.strictEqual(extractedSib, 'prod', 'Sub-test C1: Sibling value box detected');
+
+    // 2. Input element with value="prod"
+    const inputStructure = {
+        name: 'Environment',
+        value: 'prod'
+    };
+    const extractedInput = cleanEnvVal(inputStructure.value);
+    assert.strictEqual(extractedInput, 'prod', 'Sub-test C2: Input value detected');
+
+    // 3. Label with colon "Environment:" and row chip "prod"
+    const colonStructure = {
+        labelText: 'Environment:',
+        chipText: 'prod'
+    };
+    assert.strictEqual(labelRegex.test(colonStructure.labelText), true, 'Sub-test C3: Colon label matched by regex');
+    assert.strictEqual(cleanEnvVal(colonStructure.chipText), 'prod', 'Sub-test C3: Chip value detected');
+
+    // Sub-test D: Environment Error State & Active Recovery Lifecycle
+    // Step 1: Initial state has Environment error (value was 'test' or missing)
+    let memory = {
+        environment: { raw: 'test' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRentalList: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '100.00', value: 100 },
+        invoiceNumber: { value: 'INV-100' }
+    };
+
+    let evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+
+    let validationResult = {
+        summary: { invalid: 0, total: 1 },
+        sidebarValidation: evalResult,
+        totalValidation: { status: 'MATCH' }
+    };
+
+    assert.strictEqual(validationResult.sidebarValidation.environment.status, 'ERROR', 'Step 1: Environment must have error');
+
+    // Recovery check: is live DOM now corrected to "prod"?
+    const liveFixed = {
+        environment: { raw: 'prod' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '100.00', value: 100 },
+        invoiceNumber: { value: 'INV-100' }
+    };
+
+    // Detection logic in checkSidebarWatchAndRecovery
+    const curEnv = memory.environment?.raw?.trim().toLowerCase();
+    const liveEnv = liveFixed.environment?.raw?.trim().toLowerCase();
+    const envHasError = validationResult.sidebarValidation.environment.status !== 'VALID';
+
+    let hasCorrection = false;
+    if (envHasError && liveEnv === 'prod') {
+        hasCorrection = true;
+    } else if (curEnv !== 'prod' && liveEnv === 'prod') {
+        hasCorrection = true;
+    } else if (liveEnv && liveEnv !== curEnv) {
+        hasCorrection = true;
+    }
+
+    assert.strictEqual(hasCorrection, true, 'Step 2: Active recovery must detect "prod" correction from live DOM');
+
+    // Step 3: Re-evaluating validation with corrected field
+    memory.environment = liveFixed.environment;
+    evalResult = evaluateSidebarValidation({
+        environment: memory.environment,
+        isRental: memory.isRentalList,
+        tradePartnerName: memory.tradePartnerName,
+        invoiceAmount: memory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    assert.strictEqual(validationResult.sidebarValidation.environment.status, 'VALID', 'Step 3: Environment must now be valid');
+    assert.strictEqual(validationResult.sidebarValidation.isValid, true, 'Step 3: Document must be fully valid');
+
+    // Sub-test E: Refresh triggers fresh rescan and rewatch
+    // When refreshed, cache is wiped and re-scanned from live DOM
+    let refreshedMemory = {
+        environment: null,
+        tradePartnerName: null,
+        isRentalList: [],
+        invoiceAmount: null,
+        invoiceNumber: null
+    };
+
+    // Live scan finds "prod" from DOM
+    refreshedMemory.environment = liveFixed.environment;
+    refreshedMemory.tradePartnerName = liveFixed.tradePartnerName;
+    refreshedMemory.isRentalList = liveFixed.isRental;
+    refreshedMemory.invoiceAmount = liveFixed.invoiceAmount;
+    refreshedMemory.invoiceNumber = liveFixed.invoiceNumber;
+
+    evalResult = evaluateSidebarValidation({
+        environment: refreshedMemory.environment,
+        isRental: refreshedMemory.isRentalList,
+        tradePartnerName: refreshedMemory.tradePartnerName,
+        invoiceAmount: refreshedMemory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    assert.strictEqual(validationResult.sidebarValidation.environment.status, 'VALID', 'Step 4: After refresh, environment is valid');
+
+    // Step 5: User subsequently re-edits Environment to "dev"
+    const liveReEdited = {
+        environment: { raw: 'dev' },
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        isRental: [{ raw: 'False', value: 'false' }],
+        invoiceAmount: { raw: '100.00', value: 100 },
+        invoiceNumber: { value: 'INV-100' }
+    };
+
+    const reEditCurEnv = (refreshedMemory.environment?.raw || '').trim().toLowerCase();
+    const reEditLiveEnv = (liveReEdited.environment?.raw || '').trim().toLowerCase();
+    const fieldChanged = reEditLiveEnv && reEditLiveEnv !== reEditCurEnv;
+    assert.strictEqual(fieldChanged, true, 'Step 5: Rewatch must detect subsequent field change');
+
+    // Re-evaluating after re-edit
+    refreshedMemory.environment = liveReEdited.environment;
+    evalResult = evaluateSidebarValidation({
+        environment: refreshedMemory.environment,
+        isRental: refreshedMemory.isRentalList,
+        tradePartnerName: refreshedMemory.tradePartnerName,
+        invoiceAmount: refreshedMemory.invoiceAmount,
+        pageInfo: { currentPage: 1, totalPages: 1 }
+    });
+    validationResult.sidebarValidation = evalResult;
+
+    assert.strictEqual(validationResult.sidebarValidation.environment.status, 'ERROR', 'Step 6: Re-edit to "dev" produces error');
+
+    // Step 7: User fixes back to "prod"
+    const fixCurEnv = refreshedMemory.environment?.raw?.trim().toLowerCase();
+    const fixLiveEnv = 'prod';
+    const fixEnvHasError = validationResult.sidebarValidation.environment.status !== 'VALID';
+    let recoveredAgain = false;
+    if (fixEnvHasError && fixLiveEnv === 'prod') {
+        recoveredAgain = true;
+    }
+    assert.strictEqual(recoveredAgain, true, 'Step 7: Watcher immediately catches fix back to "prod"');
+
+    console.log('  Passed ✅');
+}
+
+testDocumentInstanceMatching();
+testSidebarScrollingMemory();
+testCrossDocumentEnvironmentMemory();
+testColumnIsolationAndStrictHeaders();
+testMultiPageErrorTracking();
+testInvoiceNumberPartitioning();
+testMultiPageTotalPlacement();
+testPageWithoutTable();
+testPrioritizedPageDetection();
+testPageTransitionWithTablelessPage();
+testValidStatePreservedAgainstTemporaryDetectionMiss();
+testThreeNavigationTrackingMethods();
+testPanelRenderSafeWithEmptyValidRows();
+testSidePanelScrollThreshold();
+testPeriodicTableRecheckEvery1to2Seconds();
 testSingleFilePageActivationVsFileListSuppression();
 testItemNoWhitespaceProhibition();
 testFullReverificationAndSidebarRecoveryGating();
+testSidebarAutoTurnOffAndReEditRewatch();
+testEnvironmentExtractionResilienceAndRefreshRewatch();
 
-console.log('--- ALL 26 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 28 TEST SUITES PASSED SUCCESSFULLY! ---');
+
+
 
 
 

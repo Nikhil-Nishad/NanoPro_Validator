@@ -664,8 +664,8 @@
                 if (currentMode === 'auto') {
                     runAutoDetection(0, true /* isBackgroundPoll */);
                 }
-                // Edge case: actively recheck if sidebar error/caution is fixed
-                checkSidebarErrorRecovery();
+                // Actively watch for error recovery or re-edits in sidebar
+                checkSidebarWatchAndRecovery();
             }
         }, CONFIG.tableRecheckInterval);
         console.log(`[NanoPro v4] Continuous table recheck & sidebar recovery timer active (${CONFIG.tableRecheckInterval}ms interval)`);
@@ -673,7 +673,7 @@
 
     /**
      * Check if the current validation result has errors or cautions due to sidebar items or rules.
-     * This ensures active sidebar polling ONLY runs when needed.
+     * This ensures active sidebar error recovery ONLY runs when needed.
      */
     function isSidebarErrorOrCautionActive(result) {
         if (!result) return false;
@@ -706,84 +706,169 @@
     }
 
     /**
-     * Edge case: Keep rechecking if the error on the sidebar is fixed.
-     * ONLY works if the extension is in error or caution state due to sidebar items or rules.
+     * Compare live sidebar fields with the currently validated sidebarMemory.
+     * Returns true if any field has been changed, edited, or modified.
      */
-    function checkSidebarErrorRecovery() {
-        if (!isSingleFilePage()) return;
-        if (!isSidebarErrorOrCautionActive(validationResult)) {
-            return; // Strict rule: only work if in error or caution state due to sidebar items or rules
+    function hasAnySidebarFieldChanged(live) {
+        if (!live) return false;
+
+        // 1. Environment
+        const curEnv = (sidebarMemory.environment?.raw || '').trim().toLowerCase();
+        const liveEnv = (live.environment?.raw || '').trim().toLowerCase();
+        if (liveEnv !== curEnv && (liveEnv || curEnv)) {
+            return true;
         }
 
+        // 2. Trade Partner Name
+        const curTP = (sidebarMemory.tradePartnerName?.raw || '').trim();
+        const liveTP = (live.tradePartnerName?.raw || '').trim();
+        if (liveTP !== curTP && (liveTP || curTP)) {
+            return true;
+        }
+
+        // 3. is_rental
+        const curRentalList = sidebarMemory.isRentalList || [];
+        const liveRentalList = live.isRental || [];
+        if (liveRentalList.length !== curRentalList.length && (liveRentalList.length > 0 || curRentalList.length > 0)) {
+            return true;
+        }
+        if (liveRentalList.length > 0 && curRentalList.length > 0) {
+            const curStr = curRentalList.map(r => (r.raw || '').trim().toLowerCase()).join(',');
+            const liveStr = liveRentalList.map(r => (r.raw || '').trim().toLowerCase()).join(',');
+            if (curStr !== liveStr) {
+                return true;
+            }
+        }
+
+        // 4. invoice_amount
+        const curInvRaw = (sidebarMemory.invoiceAmount?.raw || '').trim();
+        const liveInvRaw = (live.invoiceAmount?.raw || '').trim();
+        const curInvMult = !!sidebarMemory.invoiceAmount?.multiple;
+        const liveInvMult = !!live.invoiceAmount?.multiple;
+        if ((curInvRaw !== liveInvRaw && (curInvRaw || liveInvRaw)) || (curInvMult !== liveInvMult)) {
+            return true;
+        }
+
+        // 5. invoice_number
+        const curInvNum = (sidebarMemory.invoiceNumber?.value || '').trim();
+        const liveInvNum = (live.invoiceNumber?.value || '').trim();
+        if (liveInvNum !== curInvNum && (liveInvNum || curInvNum)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Active Sidebar Watcher & Error Recovery:
+     * - If in ERROR or CAUTION state due to sidebar items or rules:
+     *   Actively watches if the error has been corrected in the live DOM.
+     *   Once corrected, it updates to VALID and auto turns off the active recovery loop.
+     * - If in VALID state (auto turn-off active):
+     *   Monitors if the fields are changed or edited once again.
+     *   If changed or edited, it re-watches and re-validates immediately.
+     *   If the new edit causes an error, active recovery re-engages automatically!
+     */
+    function checkSidebarWatchAndRecovery() {
+        if (!isSingleFilePage()) return;
         if (typeof NanoProAutoDetector === 'undefined' || !NanoProAutoDetector.findSidebarFields) return;
 
         const live = NanoProAutoDetector.findSidebarFields();
         if (!live) return;
 
-        let hasCorrection = false;
+        const isErrorActive = isSidebarErrorOrCautionActive(validationResult);
 
-        // 1. Environment correction: was not valid, check if live is now prod or changed
-        const curEnv = sidebarMemory.environment?.raw?.trim().toLowerCase();
-        const liveEnv = live.environment?.raw?.trim().toLowerCase();
-        if (curEnv !== 'prod' && liveEnv === 'prod') {
-            hasCorrection = true;
-        } else if (liveEnv && liveEnv !== curEnv) {
-            hasCorrection = true;
-        }
+        if (isErrorActive) {
+            // ── Mode 1: Active Error Recovery (watching for error fixes) ──
+            let hasCorrection = false;
 
-        // 2. Trade Partner Name correction: was invalid/blank, check if live is now >= 2 chars or changed
-        const curTP = sidebarMemory.tradePartnerName?.raw?.trim() || '';
-        const liveTP = live.tradePartnerName?.raw?.trim() || '';
-        if (curTP.length < 2 && liveTP.length >= 2) {
-            hasCorrection = true;
-        } else if (liveTP && liveTP !== curTP) {
-            hasCorrection = true;
-        }
-
-        // 3. is_rental correction: count or values changed
-        const curRentalList = sidebarMemory.isRentalList || [];
-        const liveRentalList = live.isRental || [];
-        if (liveRentalList.length !== curRentalList.length) {
-            hasCorrection = true;
-        } else if (liveRentalList.length > 0) {
-            const curStr = curRentalList.map(r => r.raw?.trim()).join(',');
-            const liveStr = liveRentalList.map(r => r.raw?.trim()).join(',');
-            if (curStr !== liveStr) {
+            // 1. Environment correction: was not valid, check if live is now prod or changed
+            const curEnv = sidebarMemory.environment?.raw?.trim().toLowerCase();
+            const liveEnv = live.environment?.raw?.trim().toLowerCase();
+            const envHasError = validationResult?.sidebarValidation?.environment?.status !== 'VALID';
+            if (envHasError && liveEnv === 'prod') {
+                hasCorrection = true;
+            } else if (curEnv !== 'prod' && liveEnv === 'prod') {
+                hasCorrection = true;
+            } else if (liveEnv && liveEnv !== curEnv) {
                 hasCorrection = true;
             }
-        }
 
-        // 4. invoice_amount correction: raw amount or multiplicity changed
-        const curInvRaw = sidebarMemory.invoiceAmount?.raw?.trim();
-        const liveInvRaw = live.invoiceAmount?.raw?.trim();
-        const curInvMult = !!sidebarMemory.invoiceAmount?.multiple;
-        const liveInvMult = !!live.invoiceAmount?.multiple;
-        if ((!curInvRaw && liveInvRaw) || (curInvRaw !== liveInvRaw) || (curInvMult !== liveInvMult)) {
-            hasCorrection = true;
-        }
+            // 2. Trade Partner Name correction: was invalid/blank, check if live is now >= 2 chars or changed
+            const curTP = sidebarMemory.tradePartnerName?.raw?.trim() || '';
+            const liveTP = live.tradePartnerName?.raw?.trim() || '';
+            if (curTP.length < 2 && liveTP.length >= 2) {
+                hasCorrection = true;
+            } else if (liveTP && liveTP !== curTP) {
+                hasCorrection = true;
+            }
 
-        // 5. invoice_number change
-        const curInvNum = sidebarMemory.invoiceNumber?.value;
-        const liveInvNum = live.invoiceNumber?.value;
-        if (liveInvNum && liveInvNum !== curInvNum) {
-            hasCorrection = true;
-        }
+            // 3. is_rental correction: count or values changed
+            const curRentalList = sidebarMemory.isRentalList || [];
+            const liveRentalList = live.isRental || [];
+            if (liveRentalList.length !== curRentalList.length) {
+                hasCorrection = true;
+            } else if (liveRentalList.length > 0) {
+                const curStr = curRentalList.map(r => r.raw?.trim()).join(',');
+                const liveStr = liveRentalList.map(r => r.raw?.trim()).join(',');
+                if (curStr !== liveStr) {
+                    hasCorrection = true;
+                }
+            }
 
-        if (hasCorrection) {
-            console.log('[NanoPro v4] Sidebar error correction detected in DOM! Re-evaluating validation...');
-            scanAndRememberSidebarFields();
-            lastDetectedStateHash = null;
+            // 4. invoice_amount correction: raw amount or multiplicity changed
+            const curInvRaw = sidebarMemory.invoiceAmount?.raw?.trim();
+            const liveInvRaw = live.invoiceAmount?.raw?.trim();
+            const curInvMult = !!sidebarMemory.invoiceAmount?.multiple;
+            const liveInvMult = !!live.invoiceAmount?.multiple;
+            if ((!curInvRaw && liveInvRaw) || (curInvRaw !== liveInvRaw) || (curInvMult !== liveInvMult)) {
+                hasCorrection = true;
+            }
 
-            if (currentMode === 'auto') {
-                runAutoDetection(0, true /* isBackgroundPoll */, true /* force */);
-            } else if (lastSelection) {
-                processSelection(lastSelection);
-            } else if (validationResult) {
-                const currentRows = validationResult.results ? 
-                    validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
-                processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
+            // 5. invoice_number change
+            const curInvNum = sidebarMemory.invoiceNumber?.value;
+            const liveInvNum = live.invoiceNumber?.value;
+            if (liveInvNum && liveInvNum !== curInvNum) {
+                hasCorrection = true;
+            }
+
+            if (hasCorrection) {
+                console.log('[NanoPro v4] Sidebar error correction detected in DOM! Re-evaluating validation...');
+                revalidateFromLiveSidebar();
+            }
+        } else {
+            // ── Mode 2: Auto Turn-Off State (Valid) ──
+            // Actively check if fields are changed or edited once again:
+            if (hasAnySidebarFieldChanged(live)) {
+                console.log('[NanoPro v4] Sidebar fields were edited or changed once again! Re-watching and re-validating...');
+                revalidateFromLiveSidebar();
             }
         }
+    }
+
+    /**
+     * Re-scan sidebar and re-run validation pipeline immediately
+     */
+    function revalidateFromLiveSidebar() {
+        scanAndRememberSidebarFields();
+        lastDetectedStateHash = null;
+
+        if (currentMode === 'auto') {
+            runAutoDetection(0, true /* isBackgroundPoll */, true /* force */);
+        } else if (lastSelection) {
+            processSelection(lastSelection);
+        } else if (validationResult) {
+            const currentRows = validationResult.results ? 
+                validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
+            processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
+        }
+    }
+
+    /**
+     * Backward-compatible alias
+     */
+    function checkSidebarErrorRecovery() {
+        checkSidebarWatchAndRecovery();
     }
 
     /**
@@ -1657,40 +1742,62 @@
     function setupMutationObserver() {
         if (mutationObserver || currentMode !== 'auto') return;
 
-        // Try to find container, or fallback to body
-        const target = document.querySelector('[data-rbd-droppable-id]') ||
-                       document.querySelector(NanoProAutoDetector.PRIMARY_SELECTOR) ||
-                       document.querySelector('.overflow-auto') ||
-                       document.body;
+        const tableTarget = document.querySelector('[data-rbd-droppable-id]') ||
+                            document.querySelector(NanoProAutoDetector.PRIMARY_SELECTOR) ||
+                            document.querySelector('.overflow-auto');
+
+        const sidebarTarget = document.querySelector('[data-testid*="sidebar" i], [class*="sidebar" i], [class*="drawer" i], [class*="properties" i], [role="complementary"]');
+
+        const target = tableTarget || document.body;
         if (!target) return;
 
         let debounceTimer = null;
 
         mutationObserver = new MutationObserver((mutations) => {
-            // Only react to child node additions/removals
-            let hasChildChange = false;
+            // Ignore mutations from our own overlay
+            let hasExternalChange = false;
             for (const m of mutations) {
+                if (m.target && m.target.closest && m.target.closest('#nanopro-root, .nanopro-panel, .nanopro-badge')) {
+                    continue;
+                }
                 if (m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
-                    hasChildChange = true;
+                    hasExternalChange = true;
+                    break;
+                }
+                if (m.type === 'characterData') {
+                    hasExternalChange = true;
                     break;
                 }
             }
-            if (!hasChildChange) return;
+            if (!hasExternalChange) return;
 
             // Debounce: only re-validate after mutations settle
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                console.log('[NanoPro v2] Table DOM change detected, re-validating...');
+                console.log('[NanoPro v4] DOM mutation detected in table/sidebar, re-watching & re-validating...');
+                scanAndRememberSidebarFields();
+                lastDetectedStateHash = null;
                 runAutoDetection(0, false, false);
-            }, 250);
+            }, 200);
         });
 
         mutationObserver.observe(target, {
             childList: true,
+            characterData: true,
             subtree: true
         });
 
-        console.log('[NanoPro v2] MutationObserver active on table container');
+        if (sidebarTarget && sidebarTarget !== target) {
+            try {
+                mutationObserver.observe(sidebarTarget, {
+                    childList: true,
+                    characterData: true,
+                    subtree: true
+                });
+            } catch (e) {}
+        }
+
+        console.log('[NanoPro v4] MutationObserver active on table and sidebar containers');
     }
 
     /**
@@ -1809,6 +1916,11 @@
         lastDetectedStateHash = null;
         validationResult = null;
 
+        // Ensure reactive listeners, continuous polling, and DOM mutation observers are actively running
+        setupInputListeners();
+        startTablePolling();
+        setupMutationObserver();
+
         // 3. Scan sidebar live from DOM
         scanAndRememberSidebarFields();
 
@@ -1832,6 +1944,11 @@
             if (typeof NanoProPanel !== 'undefined' && NanoProPanel.isOpen && NanoProPanel.isOpen() && validationResult) {
                 NanoProPanel.render(validationResult);
             }
+
+            // Immediately run a post-refresh rewatch check to catch live DOM changes/fixes
+            setTimeout(() => {
+                checkSidebarWatchAndRecovery();
+            }, 100);
         }
     }
 

@@ -542,55 +542,125 @@ const NanoProAutoDetector = (function () {
      * Extract text or input value from a container element
      * If labelToExclude is passed, avoids picking up the label itself
      */
+    /**
+     * Extract text or input value from a container element
+     * If labelToExclude is passed, avoids picking up the label itself
+     */
     function extractElementValue(el, labelToExclude = null) {
         if (!el) return '';
-        const input = el.querySelector('input, textarea');
-        if (input) return (input.value || '').trim();
+        const cleanLabel = labelToExclude ? labelToExclude.toLowerCase().replace(/[^\w]/g, '') : null;
+        const excludeRegex = cleanLabel ? new RegExp(`^(?:model[_\s]*)?${cleanLabel}[:\s*#_-]*$`, 'i') : null;
 
-        // Priority 1: .ocr_text or specific OCR element
-        const ocr = el.classList?.contains('ocr_text') ? el : el.querySelector('.ocr_text');
+        // Priority 1: input with non-empty value
+        const input = el.querySelector('input, textarea, select');
+        if (input) {
+            const val = (input.value || '').trim();
+            if (val && (!excludeRegex || !excludeRegex.test(val.replace(/[^\w]/g, '')))) {
+                return val;
+            }
+        }
+
+        // Priority 2: .ocr_text or specific OCR element
+        const ocr = el.classList?.contains('ocr_text') ? el : el.querySelector('.ocr_text, [data-testid*="ocr" i]');
         if (ocr) {
             const ocrVal = (ocr.textContent || '').trim();
-            if (ocrVal) return ocrVal;
+            if (ocrVal && (!excludeRegex || !excludeRegex.test(ocrVal.replace(/[^\w]/g, '')))) {
+                return ocrVal;
+            }
         }
 
-        // Priority 2: [data-testid*="label_box_div"] or [data-testid*="ocr"]
-        const testIdBox = el.querySelector('[data-testid*="label_box_div"], [data-testid*="ocr"]');
+        // Priority 3: [data-testid*="label_box_div"] or chips
+        const testIdBox = el.querySelector('[data-testid*="label_box_div"], .MuiChip-label, [class*="chip" i], [class*="badge" i], [class*="value" i], [role="combobox"], .MuiSelect-select');
         if (testIdBox && testIdBox !== el) {
             const boxVal = (testIdBox.textContent || '').trim();
-            if (boxVal) return boxVal;
+            if (boxVal && (!excludeRegex || !excludeRegex.test(boxVal.replace(/[^\w]/g, '')))) {
+                return boxVal;
+            }
         }
 
-        // Priority 3: spans, excluding any span that is just the label
-        const normLabel = labelToExclude ? labelToExclude.toLowerCase().replace(/[\s_-]+/g, '') : null;
-        const spans = el.querySelectorAll('span');
+        // Priority 4: leaf spans, excluding any span that is just the label
+        const spans = el.querySelectorAll('span, p, div');
         for (const span of spans) {
+            if (span.children.length > 0) continue;
             const text = (span.textContent || '').trim();
             if (!text) continue;
-            if (normLabel && text.toLowerCase().replace(/[\s_-]+/g, '') === normLabel) {
-                continue; // Skip the label text span
+            if (excludeRegex && excludeRegex.test(text.replace(/[^\w]/g, ''))) {
+                continue; // Skip label text
             }
             return text;
         }
 
         // Fallback: entire text content excluding label
         const fullText = (el.textContent || '').trim();
-        if (normLabel && fullText.toLowerCase().replace(/[\s_-]+/g, '') === normLabel) {
+        if (excludeRegex && excludeRegex.test(fullText.replace(/[^\w]/g, ''))) {
             return '';
         }
         return fullText;
     }
 
     /**
-     * Find a sidebar field row container by searching for a label span
+     * Extract the field value from a row container by filtering out the label
+     */
+    function extractRowValue(row, labelRegex) {
+        if (!row) return null;
+
+        // 1. Inputs or textareas
+        const inputs = row.querySelectorAll('input, textarea, select');
+        for (const input of inputs) {
+            const v = (input.value || '').trim();
+            if (v && !labelRegex.test(v)) {
+                return v;
+            }
+        }
+
+        // 2. OCR text elements
+        const ocrs = row.querySelectorAll('.ocr_text, [data-testid*="ocr" i], [class*="ocr" i]');
+        for (const ocr of ocrs) {
+            const v = (ocr.textContent || '').trim();
+            if (v && !labelRegex.test(v)) {
+                return v;
+            }
+        }
+
+        // 3. Material-UI chips, selects, dropdown values
+        const chips = row.querySelectorAll('.MuiChip-label, [class*="chip" i], [class*="badge" i], [class*="value" i], [role="combobox"], .MuiSelect-select');
+        for (const chip of chips) {
+            const v = (chip.textContent || '').trim();
+            if (v && !labelRegex.test(v)) {
+                return v;
+            }
+        }
+
+        // 4. All leaf spans or text elements in the row
+        const spans = row.querySelectorAll('span, p, div, strong, b');
+        for (const span of spans) {
+            if (span.children.length > 0) continue;
+            const v = (span.textContent || '').trim();
+            if (v && !labelRegex.test(v)) {
+                return v;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Find a sidebar field row container by searching for a label
      */
     function findSidebarFieldRow(labelName) {
-        const target = labelName.toLowerCase().replace(/[\s_-]+/g, '');
-        const allSpans = document.querySelectorAll('span');
-        for (const span of allSpans) {
-            const text = (span.textContent || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-            if (text === target) {
-                const row = span.closest('[data-index]') || span.closest('.absolute') || span.parentElement?.parentElement;
+        const cleanLabel = (labelName || '').toLowerCase().replace(/[^\w]/g, '');
+        const targetRegex = new RegExp(`^(?:model[_\s]*)?${cleanLabel}[:\s*#_-]*$`, 'i');
+
+        const candidateEls = document.querySelectorAll('span, label, p, div, h6, strong, b');
+        for (const el of candidateEls) {
+            if (el.closest && el.closest('#nanopro-root, .nanopro-panel, .nanopro-badge')) continue;
+            if (el.children.length > 2) continue;
+
+            const text = (el.textContent || '').trim();
+            const cleanText = text.toLowerCase().replace(/[^\w]/g, '');
+            if (cleanText === cleanLabel || targetRegex.test(text)) {
+                const row = el.closest('[data-index], .absolute, [class*="row" i], [class*="field" i], [data-rbd-draggable-id], [role="row"], [class*="Item" i]') || 
+                            el.parentElement?.parentElement || el.parentElement;
                 if (row) return row;
             }
         }
@@ -722,28 +792,109 @@ const NanoProAutoDetector = (function () {
 
     /**
      * Find Environment field from sidebar (must be 'prod')
+     * Multi-strategy detection guarantees extraction across all Nanonets UI states
      */
     function findEnvironment() {
         console.log('[NanoPro AutoDetector] Looking for Environment in sidebar...');
-        const testIdEls = document.querySelectorAll('[data-testid*="label_box_div_Environment" i], [data-testid*="label_box_div_environment" i]');
-        for (const el of testIdEls) {
-            const val = extractElementValue(el, 'Environment');
-            if (val && val.toLowerCase() !== 'environment') {
-                console.log(`[NanoPro AutoDetector] Environment found via data-testid: "${val}"`);
-                return { value: val, raw: val, selector: 'data-testid' };
+        const labelRegex = /^(?:model[_\s]*)?env(?:ironment)?[:\s*#_-]*$/i;
+
+        function cleanEnvVal(raw) {
+            if (!raw || typeof raw !== 'string') return null;
+            const trimmed = raw.trim();
+            if (!trimmed || labelRegex.test(trimmed)) return null;
+            return trimmed;
+        }
+
+        // Strategy 1: Dedicated input or select elements
+        const inputSelectors = [
+            'input[data-testid*="environment" i]',
+            'input[name*="environment" i]',
+            'input[id*="environment" i]',
+            'input[aria-label*="environment" i]',
+            '[data-testid*="environment" i] input',
+            '[data-testid*="env" i] input',
+            'select[name*="environment" i]',
+            'select[data-testid*="environment" i]'
+        ];
+        for (const sel of inputSelectors) {
+            const inputs = document.querySelectorAll(sel);
+            for (const input of inputs) {
+                if (input.closest && input.closest('#nanopro-root, .nanopro-panel, .nanopro-badge')) continue;
+                const val = cleanEnvVal(input.value);
+                if (val) {
+                    console.log(`[NanoPro AutoDetector] Environment found via input [${sel}]: "${val}"`);
+                    return { value: val, raw: val, selector: 'input-attr' };
+                }
             }
         }
 
-        const row = findSidebarFieldRow('Environment');
-        if (row) {
-            const ocrDiv = row.querySelector('.ocr_text, [data-testid*="label_box_div"]');
-            let val = ocrDiv ? extractElementValue(ocrDiv, 'Environment') : '';
-            if (!val || val.toLowerCase() === 'environment') {
-                val = extractElementValue(row, 'Environment');
+        // Strategy 2: data-testid elements matching Environment
+        const testIdSelectors = [
+            '[data-testid*="label_box_div_Environment" i]',
+            '[data-testid*="label_box_div_environment" i]',
+            '[data-testid*="Environment" i]',
+            '[data-testid*="environment" i]'
+        ];
+        for (const sel of testIdSelectors) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                if (el.closest && el.closest('#nanopro-root, .nanopro-panel, .nanopro-badge')) continue;
+
+                // 2a. Self check
+                const valSelf = cleanEnvVal(extractElementValue(el, 'Environment'));
+                if (valSelf) {
+                    console.log(`[NanoPro AutoDetector] Environment found via data-testid self: "${valSelf}"`);
+                    return { value: valSelf, raw: valSelf, selector: 'data-testid' };
+                }
+
+                // 2b. Next sibling check (common in Nanonets: label box followed by value box)
+                if (el.nextElementSibling) {
+                    const valSib = cleanEnvVal(extractElementValue(el.nextElementSibling, 'Environment'));
+                    if (valSib) {
+                        console.log(`[NanoPro AutoDetector] Environment found via data-testid sibling: "${valSib}"`);
+                        return { value: valSib, raw: valSib, selector: 'data-testid-sibling' };
+                    }
+                }
+
+                // 2c. Enclosing row check
+                const row = el.closest('[data-index], .absolute, [class*="row" i], [class*="field" i], [role="row"], [class*="Item" i]') || el.parentElement;
+                if (row && row !== el) {
+                    const valRow = cleanEnvVal(extractRowValue(row, labelRegex));
+                    if (valRow) {
+                        console.log(`[NanoPro AutoDetector] Environment found via data-testid row: "${valRow}"`);
+                        return { value: valRow, raw: valRow, selector: 'data-testid-row' };
+                    }
+                }
             }
-            if (val && val.toLowerCase() !== 'environment') {
-                console.log(`[NanoPro AutoDetector] Environment found via label scan: "${val}"`);
-                return { value: val, raw: val, selector: 'label-scan' };
+        }
+
+        // Strategy 3: Text label scan across candidate elements
+        const labelCandidates = document.querySelectorAll('span, label, p, div, h6, strong, b');
+        for (const el of labelCandidates) {
+            if (el.closest && el.closest('#nanopro-root, .nanopro-panel, .nanopro-badge')) continue;
+            if (el.children.length > 2) continue;
+
+            const text = (el.textContent || '').trim();
+            if (labelRegex.test(text)) {
+                // 3a. Next sibling
+                if (el.nextElementSibling) {
+                    const valSib = cleanEnvVal(extractElementValue(el.nextElementSibling, 'Environment'));
+                    if (valSib) {
+                        console.log(`[NanoPro AutoDetector] Environment found via label sibling: "${valSib}"`);
+                        return { value: valSib, raw: valSib, selector: 'label-sibling' };
+                    }
+                }
+
+                // 3b. Enclosing row
+                const row = el.closest('[data-index], .absolute, [class*="row" i], [class*="field" i], [data-rbd-draggable-id], [role="row"], [class*="Item" i], [class*="container" i]') ||
+                            el.parentElement?.parentElement || el.parentElement;
+                if (row) {
+                    const valRow = cleanEnvVal(extractRowValue(row, labelRegex));
+                    if (valRow) {
+                        console.log(`[NanoPro AutoDetector] Environment found via label scan row: "${valRow}"`);
+                        return { value: valRow, raw: valRow, selector: 'label-scan' };
+                    }
+                }
             }
         }
 

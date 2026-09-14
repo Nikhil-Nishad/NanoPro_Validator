@@ -290,6 +290,34 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 | **R19** | MultiPage | Total Placement | `invoice_amount` only on last page ($p = Y$) | Earlier page pending total verification | `invoice_amount` present on earlier page ($p < Y$) |
 | **R20** | MultiPage | Table-less Pages | 0 rows, $\$0.00$ sum recorded cleanly without crash | — | — |
 | **R21** | UI | Design System | Zero purple/violet tokens; Slate, Emerald, Coral, Amber | — | — |
-| **R22** | Refresh | Full Reverification | Wipes all cached memory, resets hashes, re-scans live DOM fresh upon badge/panel refresh, toolbar click, or browser refresh | — | Stale memory bypasses prevented |
-| **R23** | Recovery | Active Sidebar Watcher | Continuously rechecks live DOM when in sidebar error/caution; immediately recovers to Verified upon field correction; reacts within 150ms to sidebar edits | — | Polling gated: inert when verified or on table-only math errors |
+| **R23** | Refresh | Full Reverification | Wipes all cached memory, resets hashes, re-scans live DOM fresh upon badge/panel refresh, toolbar click, or browser refresh | — | Stale memory bypasses prevented |
+| **R24** | Recovery | Sidebar Auto Turn-Off & Re-Edit | Actively watches sidebar for corrections when in error/caution; auto-turns off active recovery when valid; re-watches and re-validates immediately when fields are re-edited | — | Re-engages error recovery automatically if subsequent re-edits introduce errors |
 
+---
+
+## 10. Refresh & Active Recovery Lifecycle
+
+### 10.1 Full Reverification Trigger
+* **Triggers:**
+  - Clicking the refresh button in the NanoPro floating badge (`.nanopro-badge-refresh`).
+  - Clicking the refresh button in the NanoPro side panel header (`.nanopro-panel-refresh`).
+  - Browser page refresh / reload.
+  - Extension action menu / toolbar icon click.
+* **Actions Performed:**
+  - Complete wipe of `sidebarMemory` (Environment, is_rental, trade_partner_name, invoice_amount, invoice_number).
+  - Clear `lastDetectedStateHash` and `validationResult`.
+  - Spin animation on refresh buttons (`nanoproSpin`).
+  - Rescan fresh live DOM and re-evaluate rules unconditionally.
+
+### 10.2 Sidebar Auto Turn-Off & Re-Edit Rewatch Lifecycle
+* **Error / Caution State (Active Watching):**
+  - Triggered only when the extension is in an error or caution state due to sidebar rules (`Environment` != 'prod', inconsistent `is_rental`, blank `trade_partner_name`, `invoice_amount` multiplicity/placement, or rental `Item_No` suffix mismatches).
+  - Actively polls and reacts to DOM corrections (`input`, `change`, `click` on dropdown options, `MutationObserver`).
+  - As soon as the user corrects the fields in the Nanonets interface, the extension verifies the document and transitions to `VERIFIED`.
+* **Auto Turn-Off (Inert / Efficient State):**
+  - Once all details are corrected, the extension **auto turns off** the active recovery polling to prevent unnecessary overhead.
+* **Re-Edit & Re-Watch Engagement:**
+  - If the user changes or edits any sidebar field once again after auto turn-off:
+    1. The 150ms input/change/dropdown listener and the 1.5s state diff detector immediately notice that live DOM differs from validated memory.
+    2. The extension instantly re-watches and re-validates the document.
+    3. If the new edit introduces an error or caution, **active error recovery automatically re-engages**!
