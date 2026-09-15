@@ -73,31 +73,64 @@ function evaluateSidebarValidation(fields) {
         }
     }
 
-    // 3. trade_partner_name check: must have at least 2 characters and not be label text
+    // 3. trade_partner_name check:
+    // - If single page file: trade_partner_name is NECESSARY on this page; throw error if missing/blank/invalid.
+    // - If multi-page file: trade_partner_name could be present on AT LEAST ONE page across the document.
     let tradePartnerStatus = 'VALID';
     let tradePartnerMessage = '';
     const rawTP = tradePartner?.raw?.trim() || '';
     const alphanumericMatches = rawTP.match(/[a-zA-Z0-9]/g) || [];
     const labelStrings = /^(trade[_\s]*partner[_\s]*(?:name)?)$/i;
+    const isLiveValidTP = rawTP !== '' && !labelStrings.test(rawTP) && alphanumericMatches.length >= 2;
 
-    if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
-        tradePartnerStatus = 'ERROR';
-        tradePartnerMessage = 'trade_partner_name not found in sidebar';
-        errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-    } else if (rawTP === '') {
-        tradePartnerStatus = 'ERROR';
-        tradePartnerMessage = 'trade_partner_name is blank';
-        errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-    } else if (labelStrings.test(rawTP)) {
-        tradePartnerStatus = 'ERROR';
-        tradePartnerMessage = 'trade_partner_name has no value (only label text found)';
-        errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-    } else if (alphanumericMatches.length < 2) {
-        tradePartnerStatus = 'ERROR';
-        tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
-        errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-    } else {
+    const curPage = pageInfo?.currentPage || 1;
+    const totPages = pageInfo?.totalPages || 1;
+    const isMultiPage = totPages > 1 || pageInfo?.isMultiPage === true;
+
+    const storedTP = fields.rememberedTradePartner || fields.multiPageTradePartner;
+    const storedRaw = storedTP?.raw?.trim() || '';
+    const storedAlpha = storedRaw.match(/[a-zA-Z0-9]/g) || [];
+    const isStoredValidTP = storedRaw !== '' && !labelStrings.test(storedRaw) && storedAlpha.length >= 2;
+
+    if (isLiveValidTP) {
+        tradePartnerStatus = 'VALID';
         tradePartnerMessage = rawTP;
+    } else if (isMultiPage && isStoredValidTP) {
+        tradePartnerStatus = 'VALID';
+        tradePartnerMessage = storedRaw;
+    } else if (!isMultiPage) {
+        // SINGLE PAGE FILE: trade_partner_name is necessary -> THROW ERROR
+        if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = 'trade_partner_name not found in sidebar';
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        } else if (rawTP === '') {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = 'trade_partner_name is blank';
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        } else if (labelStrings.test(rawTP)) {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = 'trade_partner_name has no value (only label text found)';
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        } else if (alphanumericMatches.length < 2) {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        }
+    } else {
+        // MULTI-PAGE FILE: could be present on at least one page
+        if (rawTP !== '' && !labelStrings.test(rawTP) && alphanumericMatches.length < 2) {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        } else if (fields.allPagesRecorded) {
+            tradePartnerStatus = 'ERROR';
+            tradePartnerMessage = 'trade_partner_name not found on any page (must be present on at least one page)';
+            errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+        } else {
+            tradePartnerStatus = 'PENDING';
+            tradePartnerMessage = 'trade_partner_name not on this page (can be on at least one page)';
+        }
     }
 
     // 4. invoice_amount multiplicity check
@@ -114,7 +147,12 @@ function evaluateSidebarValidation(fields) {
         warnings,
         environment: { status: envStatus, value: env?.raw?.trim() || null, message: envMessage },
         isRental: rentalStatus,
-        tradePartner: { status: tradePartnerStatus, value: tradePartner?.raw?.trim() || null, message: tradePartnerMessage },
+        tradePartner: {
+            status: tradePartnerStatus,
+            value: (isLiveValidTP ? rawTP : (isStoredValidTP ? storedRaw : (rawTP || null))),
+            message: tradePartnerMessage,
+            isRemembered: !isLiveValidTP && isStoredValidTP
+        },
         invoiceAmountMultiplicity,
         pageInfo
     };
@@ -2798,6 +2836,209 @@ function testEnvironmentExtractionResilienceAndRefreshRewatch() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 29: Resilient Multi-Page Detection & Dynamic Discovery
+// ============================================================
+function testResilientMultiPageDetectionAndDynamicDiscovery() {
+    console.log('Test 29: Resilient Multi-Page Detection & Dynamic Discovery');
+
+    // 1. Nanonets Pager Control structure
+    const spanOf5 = { tagName: 'SPAN', textContent: 'of 5', nextElementSibling: null };
+    const inputEl = {
+        tagName: 'INPUT',
+        value: '2',
+        getAttribute: (attr) => attr === 'value' ? '2' : (attr === 'max' ? '5' : null),
+        max: '5',
+        nextElementSibling: spanOf5
+    };
+    const pageSpan = {
+        tagName: 'SPAN',
+        textContent: 'Page',
+        nextElementSibling: inputEl,
+        children: []
+    };
+
+    // S1 Logic test
+    function testS1Pager(span) {
+        if (/^page\s*[:#]?$/i.test(span.textContent || '')) {
+            const nextEl = span.nextElementSibling;
+            if (nextEl) {
+                const input = nextEl.tagName === 'INPUT' ? nextEl : nextEl.querySelector?.('input');
+                if (input) {
+                    const curVal = (input.value || input.getAttribute('value') || '').trim();
+                    const curNum = parseInt(curVal, 10);
+                    const maxVal = input.getAttribute('max') || input.max;
+                    const afterInput = nextEl.nextElementSibling;
+                    const afterText = (afterInput?.textContent || '').trim();
+                    const afterMatch = afterText.match(/(?:of|\/)\s*(\d+)/i);
+                    const totalMatch = afterMatch;
+                    const total = totalMatch ? parseInt(totalMatch[1], 10) : (maxVal ? parseInt(maxVal, 10) : null);
+                    const current = (!isNaN(curNum) && curNum > 0) ? curNum : 1;
+                    if (total && total > 0) {
+                        return { currentPage: current, totalPages: total, isMultiPage: total > 1, source: 'nanonets-pager' };
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    const s1Result = testS1Pager(pageSpan);
+    assert.ok(s1Result);
+    assert.strictEqual(s1Result.currentPage, 2);
+    assert.strictEqual(s1Result.totalPages, 5);
+    assert.strictEqual(s1Result.isMultiPage, true);
+
+    // 2. Generic active button false positive rejection
+    // An isolated active button with text "1" should NOT be identified as a 1-page document
+    function testThumbnailStripSafety(containerItems) {
+        if (containerItems && containerItems.length > 1) {
+            let activeIdx = -1;
+            containerItems.forEach((item, idx) => {
+                if (item.isSelected) activeIdx = idx + 1;
+            });
+            const total = containerItems.length;
+            const current = activeIdx > 0 ? activeIdx : 1;
+            return { currentPage: current, totalPages: total, isMultiPage: total > 1, source: 'thumbnail-strip' };
+        }
+        // If isolated element (length <= 1), do NOT treat as multi-page thumbnail strip!
+        return null;
+    }
+
+    const isolatedActiveButton = [{ text: '1', isSelected: true }];
+    const safeResult = testThumbnailStripSafety(isolatedActiveButton);
+    assert.strictEqual(safeResult, null, 'Isolated active button "1" must NOT be treated as thumbnail');
+
+    const validThumbnailStrip = [
+        { text: 'Page 1', isSelected: false },
+        { text: 'Page 2', isSelected: true },
+        { text: 'Page 3', isSelected: false }
+    ];
+    const thumbResult = testThumbnailStripSafety(validThumbnailStrip);
+    assert.ok(thumbResult);
+    assert.strictEqual(thumbResult.currentPage, 2);
+    assert.strictEqual(thumbResult.totalPages, 3);
+    assert.strictEqual(thumbResult.isMultiPage, true);
+
+    // 3. Dynamic multi-page discovery (1 page -> 3 pages expansion)
+    const store = { totalPages: 1, pages: {} };
+    const detectedPageInfo = { currentPage: 1, totalPages: 3, isMultiPage: true };
+
+    if (detectedPageInfo.totalPages > (store.totalPages || 1)) {
+        store.totalPages = detectedPageInfo.totalPages;
+    }
+    assert.strictEqual(store.totalPages, 3, 'Multi-page document discovery expands totalPages from 1 to 3');
+
+    // 4. Live page precedence over stale sidebarMemory.pageInfo
+    let sidebarMemoryPageInfo = { currentPage: 1, totalPages: 3, raw: 'Page 1 of 3' };
+    const livePageInfoFlipped = { currentPage: 2, totalPages: 3, raw: 'Page 2 of 3', source: 'active-pager-input' };
+
+    function resolveEffectivePage(live, memory) {
+        if (live && live.source !== 'default-single-page') {
+            return live;
+        }
+        return memory || live;
+    }
+
+    const effectivePage = resolveEffectivePage(livePageInfoFlipped, sidebarMemoryPageInfo);
+    assert.strictEqual(effectivePage.currentPage, 2, 'Live Page 2 must take precedence over cached Page 1');
+    assert.strictEqual(effectivePage.totalPages, 3);
+
+    console.log('  Passed ✅');
+}
+
+// Test 30: Multi-page vs Single-page trade_partner_name validation
+function testTradePartnerMultiPageVsSinglePage() {
+    console.log('Test 30: Multi-page vs Single-page trade_partner_name validation');
+
+    // --- 1. SINGLE-PAGE DOCUMENT (trade_partner_name is NECESSARY -> THROW ERROR) ---
+    // Missing on single page -> ERROR
+    const singleMissing = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: null,
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(singleMissing.isValid, false, 'Single-page document MUST fail when trade_partner_name is missing');
+    assert.strictEqual(singleMissing.tradePartner.status, 'ERROR');
+    assert.strictEqual(singleMissing.errors.some(e => e.field === 'trade_partner_name'), true);
+
+    // Blank on single page -> ERROR
+    const singleBlank = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: { raw: '   ' },
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(singleBlank.isValid, false, 'Single-page document MUST fail when trade_partner_name is blank');
+    assert.strictEqual(singleBlank.tradePartner.status, 'ERROR');
+
+    // Label only on single page -> ERROR
+    const singleLabel = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: { raw: 'Trade Partner Name' },
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(singleLabel.isValid, false);
+    assert.strictEqual(singleLabel.tradePartner.status, 'ERROR');
+
+    // Valid on single page -> PASS
+    const singleValid = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: { raw: 'INSTANTLRN' },
+        pageInfo: { currentPage: 1, totalPages: 1, isMultiPage: false }
+    });
+    assert.strictEqual(singleValid.isValid, true);
+    assert.strictEqual(singleValid.tradePartner.status, 'VALID');
+    assert.strictEqual(singleValid.tradePartner.value, 'INSTANTLRN');
+
+    // --- 2. MULTI-PAGE DOCUMENT (could be present on at least one page) ---
+    // Scenario A: Page 1 has trade_partner_name, Page 2 does NOT have it in DOM.
+    // Page 2 must be VALID because it is present on at least one page (Page 1)!
+    const multiPage2WithRemembered = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: null, // absent on Page 2 DOM
+        rememberedTradePartner: { raw: 'INSTANTLRN' }, // present on Page 1
+        pageInfo: { currentPage: 2, totalPages: 2, isMultiPage: true }
+    });
+    assert.strictEqual(multiPage2WithRemembered.isValid, true, 'Page 2 must be valid when trade_partner_name is present on Page 1');
+    assert.strictEqual(multiPage2WithRemembered.tradePartner.status, 'VALID');
+    assert.strictEqual(multiPage2WithRemembered.tradePartner.value, 'INSTANTLRN');
+    assert.strictEqual(multiPage2WithRemembered.tradePartner.isRemembered, true);
+    assert.strictEqual(multiPage2WithRemembered.errors.length, 0);
+
+    // Scenario B: Page 1 does NOT have trade_partner_name, Page 2 not visited yet.
+    // Page 1 must NOT throw error; it is PENDING because trade_partner_name can be on another page!
+    const multiPage1Pending = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: null,
+        allPagesRecorded: false,
+        pageInfo: { currentPage: 1, totalPages: 2, isMultiPage: true }
+    });
+    assert.strictEqual(multiPage1Pending.isValid, true, 'Page 1 must not throw error while other pages can contain the value');
+    assert.strictEqual(multiPage1Pending.tradePartner.status, 'PENDING');
+    assert.strictEqual(multiPage1Pending.errors.length, 0, 'No errors pushed for pending trade_partner_name on multi-page');
+
+    // Scenario C: Both pages visited on a 2-page document and NEITHER has trade_partner_name!
+    // Now it MUST fail with error because it was not present on at least one page!
+    const multiPageAllMissing = evaluateSidebarValidation({
+        environment: { raw: 'prod' },
+        isRental: [{ raw: 'False' }],
+        tradePartnerName: null,
+        allPagesRecorded: true,
+        pageInfo: { currentPage: 2, totalPages: 2, isMultiPage: true }
+    });
+    assert.strictEqual(multiPageAllMissing.isValid, false, 'Must fail when trade_partner_name is absent from ALL pages of a multi-page file');
+    assert.strictEqual(multiPageAllMissing.tradePartner.status, 'ERROR');
+    assert.ok(multiPageAllMissing.tradePartner.message.includes('must be present on at least one page'));
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -2818,8 +3059,11 @@ testItemNoWhitespaceProhibition();
 testFullReverificationAndSidebarRecoveryGating();
 testSidebarAutoTurnOffAndReEditRewatch();
 testEnvironmentExtractionResilienceAndRefreshRewatch();
+testResilientMultiPageDetectionAndDynamicDiscovery();
+testTradePartnerMultiPageVsSinglePage();
 
-console.log('--- ALL 28 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 30 TEST SUITES PASSED SUCCESSFULLY! ---');
+
 
 
 

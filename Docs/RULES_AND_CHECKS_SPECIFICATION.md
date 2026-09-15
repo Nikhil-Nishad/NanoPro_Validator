@@ -92,7 +92,7 @@ To ensure the extension never displays stale data or requires manual page refres
 |---|---|---|---|---|
 | **`Environment`** | Must identify environment as Production | Case-insensitive equal to `"prod"` (e.g. `prod`, `PROD`) | — | Value missing, blank, or equals `test`, `dev`, `stage`, `staging`, `demo` |
 | **`is_rental`** | Consistency across all occurrences | All instances are strictly identical (`all True` OR `all False`) | — | Mixed values on same document (e.g. one `True` and one `False`), or invalid value |
-| **`trade_partner_name`** | Presence of valid trading partner ID | Contains at least 2 alphanumeric characters (e.g. `"INSTANTLRN"`, `"ABC"`) | — | Blank, null, only whitespace, punctuation only (e.g. `---`), or matches label text (`"Trade Partner Name"`) |
+| **`trade_partner_name`** | Presence of valid trading partner ID (Single-page: mandatory; Multi-page: present on at least one page) | Contains at least 2 alphanumeric characters (e.g. `"INSTANTLRN"`, `"ABC"`), remembered across multi-page file once seen | Pending on earlier pages of multi-page file until all pages checked | Single-page: blank, null, punctuation (`---`), or label text (`"Trade Partner Name"`). Multi-page: absent from ALL pages, or explicit invalid value. |
 | **`invoice_amount` Multiplicity** | Exactly one invoice total | Exactly 1 `invoice_amount` field in the sidebar | — | Multiple instances detected (`count > 1`) |
 
 ### Per-File Environment Isolation & In-File Scrolling Memory
@@ -278,7 +278,7 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 | **R07** | Nav | Periodic Heartbeat | Polling every 1.5s detects live table edits | — | — |
 | **R08** | Sidebar | `Environment` | Value strictly equals `"prod"` (case-insensitive) | — | Value is null, blank, or $\ne$ `"prod"` |
 | **R09** | Sidebar | `is_rental` | All occurrences strictly match (`all True` or `all False`) | — | Mixed values (`True` and `False`) |
-| **R10** | Sidebar | `trade_partner_name` | Contains $\ge 2$ alphanumeric chars (e.g. `"INSTANTLRN"`) | — | Blank, whitespace, punctuation (`---`), or label text |
+| **R10** | Sidebar | `trade_partner_name` | Single-page: mandatory on page; Multi-page: present on $\ge 1$ page ($\ge 2$ chars, e.g. `"INSTANTLRN"`) | Pending on earlier pages of multi-page file | Single-page: blank/missing/invalid. Multi-page: missing from ALL pages or invalid value |
 | **R11** | Sidebar | `invoice_amount` Count | Exactly 1 field in sidebar | — | Multiple fields detected (`count > 1`) |
 | **R12** | Table | Column Isolation | `Item_Price` $\ne$ `Cyl_Returned`; `Qty` $\ne$ `Cyl_Shipped` | — | Collisions prevented via strict negative regexes |
 | **R13** | Table | Line Calculation | $|\text{Qty} \times \text{Price} - \text{Amount}| \le 0.05$ | — | $|\text{Qty} \times \text{Price} - \text{Amount}| > 0.05$ |

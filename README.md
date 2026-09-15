@@ -63,7 +63,7 @@
 
 ### 📦 Key Foundations from Version 3.0 & 2.0
 - **Cumulative Multi-Page Line Item Total**: Sums line items across all pages and validates against the final `invoice_amount` on the last page.
-- **Strict Sidebar Fields**: `Environment === "prod"` (strictly verified independently per file, remembered only within that file during scrolling/paging), `is_rental` consistency (`all True` or `all False`), and `trade_partner_name` with $\ge 2$ characters.
+- **Strict Sidebar Fields**: `Environment === "prod"` (strictly verified independently per file, remembered only within that file during scrolling/paging), `is_rental` consistency (`all True` or `all False`), and `trade_partner_name` (mandatory with $\ge 2$ characters on single-page files; present on at least one page for multi-page files, remembered across all pages once detected).
 - **Rental Cross-Validation**: `Item_No` cannot be only `"-R"`; `-R` suffix required on rentals (⚠️ Caution if missing) and forbidden on non-rentals (❌ Error if present).
 - **Dual Mode UI**: Auto detection with visual snip manual mode fallback.
 - **Zero-Purple Design System**: Clean slate, emerald, coral, amber, and sky blue tokens rendered inside an isolated Shadow DOM.
@@ -80,7 +80,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 28 validation test suites)
+# Run the automated test suite (all 30 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

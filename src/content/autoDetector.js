@@ -1044,48 +1044,99 @@ const NanoProAutoDetector = (function () {
 
     /**
      * Detect document page info (current page and total pages)
-     * Prioritizes active interactive pagers, URL params, and active thumbnail highlights.
-     * Prevents false matches from static thumbnail 1 in document order.
+     * Resilient multi-strategy detection:
+     * 1. Nanonets & viewer pager controls (input next to "Page", "of Y", etc.)
+     * 2. Active pager input with sibling/parent "of Y" (excluding tables/grids)
+     * 3. Direct page text in viewer/toolbar ("Page X of Y", "X / Y", etc.)
+     * 4. Multi-page thumbnail strips (requires multiple sibling thumbnails)
+     * 5. URL query/hash parameters
+     * 6. General DOM text scanning
      */
     function detectPageInfo() {
         try {
-            // S1: Active Pager Control — <input> element used for pagination (interactive viewer)
+            // S1: Nanonets Pager Control — <span>Page</span> followed by <input> and <span>of Y</span>
+            const allSpans = document.querySelectorAll('span, label, p, div');
+            for (const span of allSpans) {
+                if (span.children.length > 2) continue;
+                const text = (span.textContent || '').trim();
+                if (/^page\s*[:#]?$/i.test(text)) {
+                    const nextEl = span.nextElementSibling;
+                    if (nextEl) {
+                        const input = nextEl.tagName === 'INPUT' ? nextEl : nextEl.querySelector('input');
+                        if (input) {
+                            const curVal = (input.value || input.getAttribute('value') || '').trim();
+                            const curNum = parseInt(curVal, 10);
+                            const maxVal = input.getAttribute('max') || input.max;
+
+                            const afterInput = nextEl.nextElementSibling;
+                            const afterText = (afterInput?.textContent || '').trim();
+                            const afterMatch = afterText.match(/(?:of|\/)\s*(\d+)/i);
+
+                            const parent = span.parentElement;
+                            const parentText = (parent?.textContent || '').trim();
+                            const parentMatch = parentText.match(/(?:of|\/)\s*(\d+)/i);
+
+                            const totalMatch = afterMatch || parentMatch;
+                            const total = totalMatch ? parseInt(totalMatch[1], 10) : (maxVal ? parseInt(maxVal, 10) : null);
+                            const current = (!isNaN(curNum) && curNum > 0) ? curNum : 1;
+
+                            if (total && total > 0) {
+                                const info = {
+                                    currentPage: current,
+                                    totalPages: total,
+                                    isMultiPage: total > 1,
+                                    raw: `Page ${current} of ${total}`,
+                                    source: 'nanonets-pager'
+                                };
+                                console.log(`[NanoPro AutoDetector] Page info detected (nanonets-pager): Current=${info.currentPage}, Total=${info.totalPages}`);
+                                return info;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // S2: Active Pager Control via <input> element anywhere in document (excluding tables/grids/overlays)
             const inputs = document.querySelectorAll('input');
             for (const input of inputs) {
-                // Never treat table cells, rows, droppable grid inputs, or extension overlay inputs as pager control
-                if (input.closest('table, [role="table"], [role="row"], [class*="table" i], [class*="grid" i], [data-rbd-droppable-id], .nanopro-overlay, #nanopro-root, .nanopro-panel')) {
+                if (input.closest('table, [role="table"], [role="row"], [class*="table" i], [class*="grid" i], [data-rbd-droppable-id], .nanopro-overlay, #nanopro-root, .nanopro-panel, [class*="table-footer" i], [class*="rows-per-page" i]')) {
+                    continue;
+                }
+                const inputType = (input.type || '').toLowerCase();
+                if (['checkbox', 'radio', 'button', 'submit', 'hidden', 'file', 'image'].includes(inputType)) {
                     continue;
                 }
 
                 const curValStr = (input.value || input.getAttribute('value') || '').trim();
                 const curNum = parseInt(curValStr, 10);
                 if (!isNaN(curNum) && curNum > 0 && curNum <= 9999) {
-                    // Check if this input is a pager input
                     const maxVal = input.getAttribute('max') || input.max;
                     const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
                     const inputClass = (input.className || '').toLowerCase();
                     const inputName = (input.name || '').toLowerCase();
                     const inputId = (input.id || '').toLowerCase();
-                    const isInsidePagerContainer = !!input.closest('[role="toolbar"], [class*="toolbar" i], [class*="footer" i], [class*="pager" i], [class*="pagination" i], [class*="viewer" i]');
-                    const isPagerInput = ariaLabel.includes('page') || ariaLabel.includes('pager') ||
-                                         inputClass.includes('page') || inputClass.includes('pager') ||
-                                         inputName.includes('page') || inputId.includes('page') ||
-                                         isInsidePagerContainer;
+                    const isInsidePagerContainer = !!input.closest('[role="toolbar"], [class*="toolbar" i], [class*="footer" i], [class*="pager" i], [class*="pagination" i], [class*="viewer" i], [class*="pdf" i]');
 
-                    // Check sibling element for "of Y" or "/ Y"
+                    // Sibling check
                     const nextEl = input.nextElementSibling;
                     const nextText = (nextEl?.textContent || '').trim();
                     const siblingMatch = nextText.match(/(?:of|\/)\s*(\d+)/i);
 
-                    // Check parent text for "of Y" or "/ Y"
+                    // Parent check
                     const parent = input.parentElement;
                     const parentText = (parent?.textContent || '').trim();
                     const parentMatch = parentText.match(/(?:of|\/)\s*(\d+)/i);
 
+                    const prevEl = input.previousElementSibling;
+                    const prevText = (prevEl?.textContent || '').trim();
+                    const hasPageWord = /page/i.test(prevText) || /page/i.test(parentText) ||
+                                        ariaLabel.includes('page') || inputClass.includes('page') ||
+                                        inputName.includes('page') || inputId.includes('page');
+
                     const totalMatch = siblingMatch || parentMatch;
-                    if (isPagerInput && (totalMatch || maxVal)) {
+                    if ((totalMatch || maxVal) && (hasPageWord || isInsidePagerContainer || totalMatch)) {
                         const total = totalMatch ? parseInt(totalMatch[1], 10) : parseInt(maxVal, 10);
-                        if (total && total > 0) {
+                        if (total && total > 0 && curNum <= total) {
                             const info = {
                                 currentPage: curNum,
                                 totalPages: total,
@@ -1100,7 +1151,98 @@ const NanoProAutoDetector = (function () {
                 }
             }
 
-            // S2: URL Query or Hash page parameters
+            // S3: Direct Viewer / Toolbar Text ("Page X of Y", "Page X / Y", or "X of Y" in viewer/toolbar)
+            const textContainers = document.querySelectorAll('[role="toolbar"], header, nav, [class*="toolbar" i], [class*="footer" i], [class*="header" i], [class*="viewer" i], [class*="pager" i], [class*="pagination" i], [class*="pdf" i], [data-testid*="page" i], [data-testid*="pagination" i]');
+            for (const tb of textContainers) {
+                if (tb.closest('table, [role="table"], [role="row"], [class*="table" i], .nanopro-overlay, #nanopro-root, .nanopro-panel')) {
+                    continue;
+                }
+                const text = (tb.textContent || '').trim();
+                // Check for explicit "Page X of Y" or "Page: X / Y"
+                const pageMatch = text.match(/\bpage\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)\b/i);
+                if (pageMatch) {
+                    const curr = parseInt(pageMatch[1], 10);
+                    const total = parseInt(pageMatch[2], 10);
+                    if (curr > 0 && total > 0 && curr <= total) {
+                        const info = {
+                            currentPage: curr,
+                            totalPages: total,
+                            isMultiPage: total > 1,
+                            raw: `Page ${curr} of ${total}`,
+                            source: 'toolbar-page-text'
+                        };
+                        console.log(`[NanoPro AutoDetector] Page info detected (toolbar-page-text): Current=${info.currentPage}, Total=${info.totalPages}`);
+                        return info;
+                    }
+                }
+
+                // If element itself is concise (e.g. "<div class='pager'> 1 / 3 </div>"), check for "X of Y" or "X / Y"
+                if (text.length <= 30) {
+                    const conciseMatch = text.match(/^(\d+)\s*(?:of|\/)\s*(\d+)$/i);
+                    if (conciseMatch) {
+                        const curr = parseInt(conciseMatch[1], 10);
+                        const total = parseInt(conciseMatch[2], 10);
+                        if (curr > 0 && total > 0 && curr <= total && total <= 9999) {
+                            const info = {
+                                currentPage: curr,
+                                totalPages: total,
+                                isMultiPage: total > 1,
+                                raw: `Page ${curr} of ${total}`,
+                                source: 'toolbar-concise-text'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (toolbar-concise-text): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
+                    }
+                }
+            }
+
+            // S4: Multi-Page Thumbnail Strip (Resilient, requires multiple thumbnail siblings or explicit thumbnail list)
+            const thumbnailContainers = document.querySelectorAll('[class*="thumbnail" i], [class*="page-list" i], [class*="pages-list" i], [class*="pages" i], [data-testid*="thumbnail" i], [data-testid*="page-list" i], [role="tablist"]');
+            for (const container of thumbnailContainers) {
+                if (container.closest('table, [role="table"], .nanopro-overlay, #nanopro-root, .nanopro-panel')) {
+                    continue;
+                }
+                // Look for thumbnail items inside container
+                const items = container.querySelectorAll('[role="listitem"], [role="tab"], [class*="thumbnail" i], [class*="page-card" i], [class*="page" i], [data-testid*="thumbnail" i], [data-page], [data-page-number]');
+                if (items && items.length > 1) {
+                    const totalThumbs = items.length;
+                    let activeIndex = -1;
+                    let activePageNum = null;
+
+                    items.forEach((item, idx) => {
+                        const isSelected = item.matches('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i]') ||
+                                           !!item.querySelector('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i]');
+                        if (isSelected) {
+                            activeIndex = idx + 1;
+                            const attrVal = item.getAttribute('data-page') || item.getAttribute('data-page-number');
+                            if (attrVal) {
+                                const p = parseInt(attrVal, 10);
+                                if (!isNaN(p) && p > 0) activePageNum = p;
+                            }
+                            const tMatch = (item.textContent || '').trim().match(/\b(?:page\s*[:#]?)?(\d+)\b/i);
+                            if (!activePageNum && tMatch) {
+                                const p = parseInt(tMatch[1], 10);
+                                if (!isNaN(p) && p > 0 && p <= totalThumbs) activePageNum = p;
+                            }
+                        }
+                    });
+
+                    const currentPage = activePageNum || (activeIndex > 0 ? activeIndex : 1);
+                    const totalPages = Math.max(totalThumbs, currentPage);
+                    const info = {
+                        currentPage: currentPage,
+                        totalPages: totalPages,
+                        isMultiPage: totalPages > 1,
+                        raw: `Page ${currentPage} of ${totalPages}`,
+                        source: 'thumbnail-strip'
+                    };
+                    console.log(`[NanoPro AutoDetector] Page info detected (thumbnail-strip): Current=${info.currentPage}, Total=${info.totalPages}`);
+                    return info;
+                }
+            }
+
+            // S5: URL Query or Hash page parameters
             if (typeof window !== 'undefined' && window.location) {
                 const url = window.location.href + ' ' + window.location.hash;
                 const pageMatch = url.match(/[?&#](?:page|page_number|pageNum|pageNumber)=(\d+)/i) ||
@@ -1121,101 +1263,31 @@ const NanoProAutoDetector = (function () {
                 }
             }
 
-            // S3: Active / Selected Page Thumbnail in sidebar
-            const activeThumbnailSelectors = [
-                '[aria-selected="true"]',
-                '[data-selected="true"]',
-                '[class*="selected" i]',
-                '[class*="active" i]',
-                '[class*="border-blue" i]',
-                '[class*="ring-blue" i]'
-            ];
-            for (const sel of activeThumbnailSelectors) {
-                const activeEls = document.querySelectorAll(sel);
-                for (const el of activeEls) {
-                    const text = (el.textContent || '').trim();
-                    const match = text.match(/page\s*[:#]?\s*(\d+)(?:\s*(?:of|\/)\s*(\d+))?/i) ||
-                                  text.match(/^(\d+)(?:\s*(?:of|\/)\s*(\d+))?$/);
-                    if (match) {
-                        const cur = parseInt(match[1], 10);
-                        if (cur > 0) {
-                            let total = match[2] ? parseInt(match[2], 10) : null;
-                            if (!total) {
-                                const parentList = el.closest('[role="list"], [role="tablist"], .overflow-auto, [class*="thumbnail" i], [class*="pages" i]');
-                                if (parentList) {
-                                    const cleanSel = sel.replace(/\[aria-selected="true"\]|\[data-selected="true"\]/, '').trim();
-                                    let siblingThumbs = [];
-                                    if (cleanSel.length > 0) {
-                                        try {
-                                            siblingThumbs = parentList.querySelectorAll(cleanSel);
-                                        } catch (e) {}
-                                    }
-                                    if (siblingThumbs.length <= 1) {
-                                        try {
-                                            siblingThumbs = parentList.querySelectorAll('[role="listitem"], [role="tab"], [class*="thumbnail" i], [class*="page" i]');
-                                        } catch (e) {}
-                                    }
-                                    if (siblingThumbs.length > 1) {
-                                        total = siblingThumbs.length;
-                                    }
-                                }
-                            }
-                            const totalPages = (total && total > 0) ? total : Math.max(cur, 1);
-                            const info = {
-                                currentPage: cur,
-                                totalPages: totalPages,
-                                isMultiPage: totalPages > 1,
-                                raw: `Page ${cur} of ${totalPages}`,
-                                source: 'active-thumbnail'
-                            };
-                            console.log(`[NanoPro AutoDetector] Page info detected (active-thumbnail): Current=${info.currentPage}, Total=${info.totalPages}`);
-                            return info;
-                        }
-                    }
+            // S6: General pattern matching across elements (direct text or parent)
+            const allElements = document.querySelectorAll('span, div, p');
+            for (const el of allElements) {
+                if (el.closest('table, [role="table"], [role="row"], .nanopro-overlay, #nanopro-root, .nanopro-panel')) {
+                    continue;
                 }
-            }
-
-            // S4: Viewer Toolbar / Header / Footer text (outside thumbnail sidebar)
-            const toolbarEls = document.querySelectorAll('[role="toolbar"], header, nav, [class*="toolbar" i], [class*="footer" i], [class*="header" i], [class*="viewer" i], [class*="pager" i], [class*="pagination" i]');
-            for (const tb of toolbarEls) {
-                const text = (tb.textContent || '').trim();
-                const match = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i) ||
-                              text.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
-                if (match) {
-                    const currentPage = parseInt(match[1], 10) || 1;
-                    const totalPages = parseInt(match[2], 10) || 1;
-                    const info = {
-                        currentPage: currentPage,
-                        totalPages: totalPages,
-                        isMultiPage: totalPages > 1,
-                        raw: `Page ${currentPage} of ${totalPages}`,
-                        source: 'toolbar-text'
-                    };
-                    console.log(`[NanoPro AutoDetector] Page info detected (toolbar): Current=${info.currentPage}, Total=${info.totalPages}`);
-                    return info;
-                }
-            }
-
-            // S5: General pattern matching across leaf elements (excluding inactive thumbnail containers)
-            const allSpans = document.querySelectorAll('span, div, p');
-            for (const el of allSpans) {
-                if (el.children.length > 0) continue;
-                if (el.closest('[class*="thumbnail" i]:not([class*="selected" i]):not([class*="active" i])')) continue;
-
                 const text = (el.textContent || '').trim();
-                const directMatch = text.match(/page\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                if (text.length > 80) continue;
+
+                // Match "Page 1 of 3"
+                const directMatch = text.match(/\bpage\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)\b/i);
                 if (directMatch) {
                     const currentPage = parseInt(directMatch[1], 10) || 1;
                     const totalPages = parseInt(directMatch[2], 10) || 1;
-                    const info = {
-                        currentPage: currentPage,
-                        totalPages: totalPages,
-                        isMultiPage: totalPages > 1,
-                        raw: `Page ${currentPage} of ${totalPages}`,
-                        source: 'direct-text'
-                    };
-                    console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
-                    return info;
+                    if (currentPage <= totalPages && totalPages > 0) {
+                        const info = {
+                            currentPage: currentPage,
+                            totalPages: totalPages,
+                            isMultiPage: totalPages > 1,
+                            raw: `Page ${currentPage} of ${totalPages}`,
+                            source: 'direct-text'
+                        };
+                        console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
+                        return info;
+                    }
                 }
             }
         } catch (e) {

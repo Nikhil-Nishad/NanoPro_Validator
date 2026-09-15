@@ -38,6 +38,7 @@
         totalPages: 1,
         lastInvoiceAmount: null,
         lastInvoiceNumber: null,
+        tradePartnerName: null,
         pages: {} // pageNum -> { sumAmount: number, rowCount: number, results: array, timestamp: number }
     };
 
@@ -151,6 +152,7 @@
                     console.log(`[NanoPro v3] New invoice detected within document: "${multiPageStore.lastInvoiceNumber}" -> "${live.invoiceNumber.value}". Starting fresh multi-page accumulation.`);
                     multiPageStore.pages = {};
                     multiPageStore.lastInvoiceAmount = null;
+                    multiPageStore.tradePartnerName = null;
                 }
                 multiPageStore.lastInvoiceNumber = live.invoiceNumber.value;
                 sidebarMemory.invoiceNumber = { ...live.invoiceNumber, isRemembered: false };
@@ -169,10 +171,20 @@
 
         // 2. Trade Partner Name
         if (live.tradePartnerName && live.tradePartnerName.raw) {
+            const rawTP = live.tradePartnerName.raw.trim();
+            const labelStrings = /^(trade[_\s]*partner[_\s]*(?:name)?)$/i;
+            const alphanumericMatches = rawTP.match(/[a-zA-Z0-9]/g) || [];
+            const isValidTP = rawTP !== '' && !labelStrings.test(rawTP) && alphanumericMatches.length >= 2;
+
             const prevVal = sidebarMemory.tradePartnerName?.raw;
             if (prevVal !== live.tradePartnerName.raw) {
                 sidebarMemory.tradePartnerName = { ...live.tradePartnerName, isRemembered: false };
+                if (isValidTP) {
+                    multiPageStore.tradePartnerName = { ...live.tradePartnerName, isRemembered: false };
+                }
                 hasChanges = true;
+            } else if (isValidTP && !multiPageStore.tradePartnerName) {
+                multiPageStore.tradePartnerName = { ...live.tradePartnerName, isRemembered: false };
             }
         }
 
@@ -226,6 +238,9 @@
                 sidebarMemory.pageInfo = live.pageInfo;
                 hasChanges = true;
             }
+            if (live.pageInfo.totalPages > (multiPageStore.totalPages || 1)) {
+                multiPageStore.totalPages = live.pageInfo.totalPages;
+            }
         }
 
         return hasChanges;
@@ -245,13 +260,36 @@
         const env = sidebarMemory.environment ? 
             { ...sidebarMemory.environment, isRemembered: !isLiveEnv } : null;
 
+        // Live pageInfo always takes precedence to reflect page flips immediately
+        const livePage = NanoProAutoDetector.detectPageInfo ? NanoProAutoDetector.detectPageInfo() : null;
+        let effectivePage = livePage;
+        if (!effectivePage || effectivePage.source === 'default-single-page') {
+            if (sidebarMemory.pageInfo && sidebarMemory.pageInfo.source !== 'default-single-page') {
+                effectivePage = sidebarMemory.pageInfo;
+            }
+        }
+        if (!effectivePage) {
+            effectivePage = { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
+        }
+        if (multiPageStore.totalPages > effectivePage.totalPages) {
+            effectivePage = {
+                ...effectivePage,
+                totalPages: multiPageStore.totalPages,
+                isMultiPage: true
+            };
+        }
+
+        const effectiveTP = (sidebarMemory.tradePartnerName && !sidebarMemory.tradePartnerName.isRemembered) ? 
+            sidebarMemory.tradePartnerName : 
+            (sidebarMemory.tradePartnerName || multiPageStore.tradePartnerName);
+
         return {
             environment: env,
-            tradePartnerName: sidebarMemory.tradePartnerName ? { ...sidebarMemory.tradePartnerName, isRemembered: !isLiveTP } : null,
+            tradePartnerName: effectiveTP ? { ...effectiveTP, isRemembered: !isLiveTP } : null,
             invoiceAmount: sidebarMemory.invoiceAmount ? { ...sidebarMemory.invoiceAmount, isRemembered: !isLiveInv } : null,
             invoiceNumber: sidebarMemory.invoiceNumber ? { ...sidebarMemory.invoiceNumber, isRemembered: !isLiveInvNum } : null,
             isRental: sidebarMemory.isRentalList && sidebarMemory.isRentalList.length > 0 ? sidebarMemory.isRentalList : [],
-            pageInfo: sidebarMemory.pageInfo || NanoProAutoDetector.detectPageInfo()
+            pageInfo: effectivePage
         };
     }
 
@@ -685,7 +723,7 @@
             if (sb.warnings && sb.warnings.length > 0) return true;
             if (sb.environment && sb.environment.status !== 'VALID') return true;
             if (sb.isRental && sb.isRental.status !== 'VALID') return true;
-            if (sb.tradePartner && sb.tradePartner.status !== 'VALID') return true;
+            if (sb.tradePartner && sb.tradePartner.status === 'ERROR') return true;
             if (sb.invoiceAmountMultiplicity && sb.invoiceAmountMultiplicity.status === 'ERROR') return true;
         }
 
@@ -1032,7 +1070,9 @@
 
         const pageInfo = fields.pageInfo || { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
         const currentPage = pageInfo.currentPage || 1;
-        const totalPages = pageInfo.totalPages || 1;
+        const totalPages = Math.max(pageInfo.totalPages || 1, multiPageStore.totalPages || 1);
+        pageInfo.totalPages = totalPages;
+        pageInfo.isMultiPage = totalPages > 1;
 
         let validationRows = [];
         let rawItemNos = [];
@@ -1119,6 +1159,7 @@
             console.log(`[NanoPro v3] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Resetting multi-page accumulation.`);
             multiPageStore.pages = {};
             multiPageStore.lastInvoiceAmount = null;
+            multiPageStore.tradePartnerName = null;
         }
         if (currentInvNum) {
             multiPageStore.lastInvoiceNumber = currentInvNum;
@@ -1129,6 +1170,7 @@
             multiPageStore.fileHash = window.location.hash;
             multiPageStore.pages = {};
             multiPageStore.lastInvoiceAmount = null;
+            multiPageStore.tradePartnerName = null;
         }
         multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
         multiPageStore.pages[currentPage] = {
@@ -1546,31 +1588,75 @@
                 }
             }
 
-            // 3. trade_partner_name check: must be present and have a real value with at least 2 characters (e.g. "INSTANTLRN")
+            const curPage = pageInfo?.currentPage || 1;
+            const totPages = Math.max(pageInfo?.totalPages || 1, multiPageStore.totalPages || 1);
+            const isMultiPage = totPages > 1 || pageInfo?.isMultiPage === true;
+
+            // 3. trade_partner_name check:
+            // - If single page file: trade_partner_name is NECESSARY on this page; throw error if missing/blank/invalid.
+            // - If multi-page file: trade_partner_name could be present on AT LEAST ONE page across the document.
             let tradePartnerStatus = 'VALID';
             let tradePartnerMessage = '';
             const rawTP = tradePartner?.raw?.trim() || '';
             const alphanumericMatches = rawTP.match(/[a-zA-Z0-9]/g) || [];
             const labelStrings = /^(trade[_\s]*partner[_\s]*(?:name)?)$/i;
+            const isLiveValidTP = rawTP !== '' && !labelStrings.test(rawTP) && alphanumericMatches.length >= 2;
 
-            if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
-                tradePartnerStatus = 'ERROR';
-                tradePartnerMessage = 'trade_partner_name not found in sidebar';
-                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-            } else if (rawTP === '') {
-                tradePartnerStatus = 'ERROR';
-                tradePartnerMessage = 'trade_partner_name is blank';
-                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-            } else if (labelStrings.test(rawTP)) {
-                tradePartnerStatus = 'ERROR';
-                tradePartnerMessage = 'trade_partner_name has no value (only label text found)';
-                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-            } else if (alphanumericMatches.length < 2) {
-                tradePartnerStatus = 'ERROR';
-                tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
-                errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
-            } else {
+            // Check if stored from another page in multiPageStore or sidebarMemory
+            const storedTP = multiPageStore.tradePartnerName || sidebarMemory.tradePartnerName;
+            const storedRaw = storedTP?.raw?.trim() || '';
+            const storedAlpha = storedRaw.match(/[a-zA-Z0-9]/g) || [];
+            const isStoredValidTP = storedRaw !== '' && !labelStrings.test(storedRaw) && storedAlpha.length >= 2;
+
+            if (isLiveValidTP) {
+                tradePartnerStatus = 'VALID';
                 tradePartnerMessage = rawTP;
+                // Save across multiPageStore and sidebarMemory
+                sidebarMemory.tradePartnerName = { ...(tradePartner || { raw: rawTP }), isRemembered: false };
+                multiPageStore.tradePartnerName = { ...(tradePartner || { raw: rawTP }), isRemembered: false };
+            } else if (isMultiPage && isStoredValidTP) {
+                // Multi-page document where trade_partner_name is present on at least one page!
+                tradePartnerStatus = 'VALID';
+                tradePartnerMessage = storedRaw;
+            } else if (!isMultiPage) {
+                // SINGLE PAGE FILE: trade_partner_name is necessary -> THROW ERROR
+                if (!tradePartner || tradePartner.raw === null || tradePartner.raw === undefined) {
+                    tradePartnerStatus = 'ERROR';
+                    tradePartnerMessage = 'trade_partner_name not found in sidebar';
+                    errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                } else if (rawTP === '') {
+                    tradePartnerStatus = 'ERROR';
+                    tradePartnerMessage = 'trade_partner_name is blank';
+                    errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                } else if (labelStrings.test(rawTP)) {
+                    tradePartnerStatus = 'ERROR';
+                    tradePartnerMessage = 'trade_partner_name has no value (only label text found)';
+                    errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                } else if (alphanumericMatches.length < 2) {
+                    tradePartnerStatus = 'ERROR';
+                    tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
+                    errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                }
+            } else {
+                // MULTI-PAGE FILE: could be present on at least one page
+                if (rawTP !== '' && !labelStrings.test(rawTP) && alphanumericMatches.length < 2) {
+                    // Explicit invalid value was entered/scanned on this page
+                    tradePartnerStatus = 'ERROR';
+                    tradePartnerMessage = `trade_partner_name has invalid value "${rawTP}" (needs at least 2 characters)`;
+                    errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                } else {
+                    // Missing or blank on current page: check if all pages of document have already been recorded
+                    const recordedPages = Object.keys(multiPageStore.pages || {}).map(Number);
+                    const allPagesRecorded = totPages > 1 && recordedPages.length >= totPages;
+                    if (allPagesRecorded) {
+                        tradePartnerStatus = 'ERROR';
+                        tradePartnerMessage = 'trade_partner_name not found on any page (must be present on at least one page)';
+                        errors.push({ field: 'trade_partner_name', message: tradePartnerMessage });
+                    } else {
+                        tradePartnerStatus = 'PENDING';
+                        tradePartnerMessage = 'trade_partner_name not on this page (can be on at least one page)';
+                    }
+                }
             }
 
             // 4. invoice_amount multiplicity and page placement check
@@ -1582,8 +1668,6 @@
             }
 
             // Single multi-page invoice rule: invoice_amount must only be on the last page!
-            const curPage = pageInfo?.currentPage || 1;
-            const totPages = Math.max(pageInfo?.totalPages || 1, multiPageStore.totalPages || 1);
             const liveInvoiceAmount = NanoProAutoDetector.findInvoiceAmount();
             if (totPages > 1 && curPage < totPages && liveInvoiceAmount) {
                 const placementMsg = `invoice_amount is present on Page ${curPage}, but should only be on the last page (Page ${totPages})`;
@@ -1604,9 +1688,9 @@
                 isRental: rentalStatus,
                 tradePartner: {
                     status: tradePartnerStatus,
-                    value: tradePartner?.raw?.trim() || null,
+                    value: (isLiveValidTP ? rawTP : (isStoredValidTP ? storedRaw : (rawTP || null))),
                     message: tradePartnerMessage,
-                    isRemembered: !!tradePartner?.isRemembered
+                    isRemembered: !isLiveValidTP && isStoredValidTP
                 },
                 invoiceAmountMultiplicity: invoiceAmountMultiplicity,
                 pageInfo: pageInfo
@@ -2220,14 +2304,27 @@
         // METHOD 3: Page Number Tracking for Multi-Page Files
         // ─────────────────────────────────────────────────────────────
         const pageInfo = NanoProAutoDetector.detectPageInfo ? NanoProAutoDetector.detectPageInfo() : null;
-        if (pageInfo && (pageInfo.totalPages > 1 || pageInfo.isMultiPage)) {
-            // Only applicable for multi-page documents
-            if (lastObservedPageNum !== null && pageInfo.currentPage !== lastObservedPageNum) {
-                console.log(`[NanoPro v3] Method 3: Multi-page flip detected: P${lastObservedPageNum} -> P${pageInfo.currentPage} of ${pageInfo.totalPages}`);
-                lastObservedPageNum = pageInfo.currentPage;
-                handlePageFlip(pageInfo);
-            } else if (lastObservedPageNum === null) {
-                lastObservedPageNum = pageInfo.currentPage;
+        if (pageInfo) {
+            const isMulti = pageInfo.totalPages > 1 || pageInfo.isMultiPage || (multiPageStore.totalPages > 1);
+            if (isMulti) {
+                // If totalPages expanded from 1 to > 1, update store and UI immediately
+                if (pageInfo.totalPages > (multiPageStore.totalPages || 1)) {
+                    console.log(`[NanoPro v3] Method 3: Multi-page document discovered (${multiPageStore.totalPages || 1} -> ${pageInfo.totalPages} pages)`);
+                    multiPageStore.totalPages = pageInfo.totalPages;
+                    sidebarMemory.pageInfo = pageInfo;
+                    if (validationResult && validationResult.results) {
+                        attachTotalValidation(validationResult, null, pageInfo);
+                        updateUI(validationResult);
+                    }
+                }
+
+                if (lastObservedPageNum !== null && pageInfo.currentPage !== lastObservedPageNum) {
+                    console.log(`[NanoPro v3] Method 3: Multi-page flip detected: P${lastObservedPageNum} -> P${pageInfo.currentPage} of ${pageInfo.totalPages}`);
+                    lastObservedPageNum = pageInfo.currentPage;
+                    handlePageFlip(pageInfo);
+                } else if (lastObservedPageNum === null) {
+                    lastObservedPageNum = pageInfo.currentPage;
+                }
             }
         }
     }

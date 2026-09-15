@@ -362,6 +362,7 @@ const NanoProPanel = (function () {
       const envPass = env && env.status === 'VALID';
       const rentalPass = rental && rental.status === 'VALID';
       const partnerPass = partner && partner.status === 'VALID';
+      const partnerPending = partner && partner.status === 'PENDING';
 
       return `
         <div class="nanopro-sidebar-section">
@@ -382,13 +383,13 @@ const NanoProPanel = (function () {
               </div>
             </div>
 
-            <div class="nanopro-sidebar-card ${partnerPass ? 'card-valid' : 'card-error'}">
+            <div class="nanopro-sidebar-card ${partnerPass ? 'card-valid' : (partnerPending ? 'card-info' : 'card-error')}">
               <div class="nanopro-card-title">
-                <span class="nanopro-card-icon">${partnerPass ? '✓' : '✗'}</span>
+                <span class="nanopro-card-icon">${partnerPass ? '✓' : (partnerPending ? 'ℹ' : '✗')}</span>
                 <span>Trade Partner</span>
               </div>
               <div class="nanopro-card-desc" title="${partner?.value || ''}">
-                ${partnerPass ? ((partner.value || 'Present') + (partner?.isRemembered ? ' (remembered)' : '')) : (partner?.message || 'Missing')}
+                ${partnerPass ? ((partner.value || 'Present') + (partner?.isRemembered ? ' (remembered)' : '')) : (partnerPending ? 'Pending other pages' : (partner?.message || 'Missing'))}
               </div>
             </div>
 
