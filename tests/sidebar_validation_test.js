@@ -3184,6 +3184,92 @@ function testTablelessPageAccumulationAndStateIsolation() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 32: Page 1 Table Preservation During Page Flip to Page 2
+// ============================================================
+function testPage1TablePreservationOnNavigation() {
+    console.log('Test 32: Page 1 Table Preservation during navigation to Page 2');
+
+    const multiPageStore = {
+        fileHash: '#/ocr/test/model1/doc1',
+        totalPages: 2,
+        pages: {}
+    };
+
+    // Step 1: Page 1 is detected and confirmed with a table (2 items, sum = 43.40)
+    multiPageStore.pages[1] = {
+        pageNumber: 1,
+        sumAmount: 43.40,
+        rowCount: 2,
+        totalRows: 2,
+        calcErrors: 0,
+        itemNoErrors: 0,
+        hasNoTable: false,
+        status: 'VALID',
+        errorSummary: 'Valid'
+    };
+
+    // Helper simulating the detector's decision to treat a page as table-less
+    function attemptTablelessOverwrite(pageNum, isDocPage, isBackgroundPoll, retryCount) {
+        const existingPageData = multiPageStore.pages?.[pageNum];
+        const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
+
+        // FIXED GUARD: Never treat a page as tableless if it already had a confirmed table!
+        if (isDocPage && !hadExistingTable) {
+            const maxTableWait = 1;
+            if (retryCount < maxTableWait && !isBackgroundPoll) {
+                return { action: 'retry' };
+            }
+            // Overwrites page as table-less
+            multiPageStore.pages[pageNum] = {
+                pageNumber: pageNum,
+                sumAmount: 0.00,
+                rowCount: 0,
+                totalRows: 0,
+                hasNoTable: true,
+                status: 'VALID',
+                errorSummary: 'No Table'
+            };
+            return { action: 'overwritten_as_tableless' };
+        }
+
+        return { action: 'preserved_existing_table' };
+    }
+
+    // Step 2: User navigates to Page 2.
+    // Simulating momentary DOM unmount where table is absent while pageNum is 1 (or during transition).
+    // Even if isBackgroundPoll is false (immediate run), hadExistingTable must prevent wiping Page 1!
+    const transitionAttempt1 = attemptTablelessOverwrite(1, true, false, 1);
+    assert.strictEqual(
+        transitionAttempt1.action,
+        'preserved_existing_table',
+        'Page 1 must NOT be overwritten as tableless during transition unmount!'
+    );
+    assert.strictEqual(multiPageStore.pages[1].totalRows, 2);
+    assert.strictEqual(multiPageStore.pages[1].hasNoTable, false);
+    assert.strictEqual(multiPageStore.pages[1].sumAmount, 43.40);
+
+    // Step 3: Page 2 (which legitimately has no table) is processed
+    const page2Attempt = attemptTablelessOverwrite(2, true, false, 1);
+    assert.strictEqual(page2Attempt.action, 'overwritten_as_tableless', 'Page 2 should legitimately be recorded as tableless');
+    assert.strictEqual(multiPageStore.pages[2].hasNoTable, true);
+    assert.strictEqual(multiPageStore.pages[2].totalRows, 0);
+
+    // Step 4: Verify multi-page cumulative sum and page statuses
+    const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort();
+    assert.deepStrictEqual(recordedPages, [1, 2]);
+    assert.strictEqual(multiPageStore.pages[1].hasNoTable, false, 'Page 1 must still have its table');
+    assert.strictEqual(multiPageStore.pages[1].sumAmount, 43.40);
+    assert.strictEqual(multiPageStore.pages[2].hasNoTable, true, 'Page 2 is table-less');
+    assert.strictEqual(multiPageStore.pages[2].sumAmount, 0.00);
+
+    // Cumulative sum across both pages:
+    const totalSum = recordedPages.reduce((sum, p) => sum + multiPageStore.pages[p].sumAmount, 0);
+    assert.strictEqual(totalSum, 43.40, 'Total cumulative sum must accurately reflect Page 1 table');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -3207,8 +3293,9 @@ testEnvironmentExtractionResilienceAndRefreshRewatch();
 testResilientMultiPageDetectionAndDynamicDiscovery();
 testTradePartnerMultiPageVsSinglePage();
 testTablelessPageAccumulationAndStateIsolation();
+testPage1TablePreservationOnNavigation();
 
-console.log('--- ALL 31 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 32 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 

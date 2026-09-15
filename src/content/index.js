@@ -966,28 +966,28 @@
                     const existingPageData = multiPageStore.pages?.[pageNum];
                     const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
 
-                    if (isDocPage) {
+                    // If this page ALREADY has a confirmed table with rows, NEVER turn it into a table-less page
+                    // due to momentary unmounting during page flips, navigation, or scrolling debounce!
+                    if (isDocPage && !hadExistingTable) {
                         const maxTableWait = 1;
-                        if (!hadExistingTable || !isBackgroundPoll) {
-                            if (retryCount < maxTableWait && !isBackgroundPoll) {
-                                console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
-                                autoDetectTimer = setTimeout(
-                                    () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
-                                    150
-                                );
-                                return;
-                            }
-
-                            // Table did not appear after settling — legitimately a table-less document page!
-                            const currentTablelessHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
-                            if (currentTablelessHash === lastDetectedStateHash && !force && validationResult && validationResult.hasNoTable) {
-                                return;
-                            }
-                            console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
-                            lastDetectedStateHash = currentTablelessHash;
-                            processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
+                        if (retryCount < maxTableWait && !isBackgroundPoll) {
+                            console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
+                            autoDetectTimer = setTimeout(
+                                () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
+                                150
+                            );
                             return;
                         }
+
+                        // Table did not appear after settling — legitimately a table-less document page!
+                        const currentTablelessHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
+                        if (currentTablelessHash === lastDetectedStateHash && !force && validationResult && validationResult.hasNoTable) {
+                            return;
+                        }
+                        console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
+                        lastDetectedStateHash = currentTablelessHash;
+                        processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
+                        return;
                     }
                 }
 
@@ -2347,7 +2347,6 @@
         sidebarMemory.pageInfo = newPageInfo;
         lastDetectedStateHash = null;
         validationResult = null;
-        delete multiPageStore.pages[newPageInfo.currentPage];
         NanoProBadge.setLoading();
         if (currentMode === 'auto') {
             clearAutoDetect();
@@ -2419,7 +2418,6 @@
             console.log(`[NanoPro v3] Multi-page navigation within same document instance: ${currentHash}`);
             initializedForFile = currentHash;
             // Retain multiPageStore and sidebarMemory! Re-run detection on the new page.
-            sidebarMemory.pageInfo = null; // Clear cached pageInfo so new page is detected!
             lastDetectedStateHash = null; // Clear hash so it doesn't short-circuit!
             validationResult = null;
             NanoProBadge.setLoading();

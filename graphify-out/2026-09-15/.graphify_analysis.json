@@ -176,10 +176,12 @@
       "tests_sidebar_validation_test_testitemnowhitespaceprohibition",
       "tests_sidebar_validation_test_testmultipagetotalplacement",
       "tests_sidebar_validation_test_testmultipagetotalplacement_evaluatepagetotal",
-      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows",
-      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows_renderpanelsafe",
-      "tests_sidebar_validation_test_testprioritizedpagedetection",
-      "tests_sidebar_validation_test_testprioritizedpagedetection_detectpagepriority",
+      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage",
+      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage_simulatescanpage",
+      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds",
+      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds_runtablerecheck",
+      "tests_sidebar_validation_test_testsidepanelscrollthreshold",
+      "tests_sidebar_validation_test_testsidepanelscrollthreshold_simulatesidepanelscroll",
       "tests_sidebar_validation_test_testtablelesspageaccumulationandstateisolation",
       "tests_sidebar_validation_test_testtablelesspageaccumulationandstateisolation_processpage",
       "tests_sidebar_validation_test_testvalidstatepreservedagainsttemporarydetectionmiss",
@@ -220,6 +222,22 @@
       "manifest_toggle_panel_suggested_key"
     ],
     "8": [
+      "tests_sidebar_validation_test_evaluatesidebarvalidation",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_scansidebar",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_simulateopenfile",
+      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch",
+      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch_cleanenvval",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_issidebarerrororcautionactive",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulatehandlefullrefresh",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulaterecoverycheck",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_hasanysidebarfieldchanged",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_issidebarerrororcautionactive",
+      "tests_sidebar_validation_test_testtradepartnermultipagevssinglepage"
+    ],
+    "9": [
       "agent_skills_vulnerability_scanner_scripts_security_scan",
       "agent_skills_vulnerability_scanner_scripts_security_scan_main",
       "agent_skills_vulnerability_scanner_scripts_security_scan_py_any",
@@ -234,7 +252,7 @@
       "agent_skills_vulnerability_scanner_scripts_security_scan_scan_dependencies",
       "agent_skills_vulnerability_scanner_scripts_security_scan_scan_secrets"
     ],
-    "9": [
+    "10": [
       "agent_skills_nextjs_react_expert_scripts_convert_rules",
       "agent_skills_nextjs_react_expert_scripts_convert_rules_generate_section_file",
       "agent_skills_nextjs_react_expert_scripts_convert_rules_group_rules_by_section",
@@ -248,7 +266,7 @@
       "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_66",
       "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_86"
     ],
-    "10": [
+    "11": [
       "agent_skills_i18n_localization_scripts_i18n_checker",
       "agent_skills_i18n_localization_scripts_i18n_checker_check_hardcoded_strings",
       "agent_skills_i18n_localization_scripts_i18n_checker_check_locale_completeness",
@@ -260,19 +278,6 @@
       "agent_skills_i18n_localization_scripts_i18n_checker_rationale_132",
       "agent_skills_i18n_localization_scripts_i18n_checker_rationale_54",
       "agent_skills_i18n_localization_scripts_i18n_checker_rationale_71"
-    ],
-    "11": [
-      "tests_sidebar_validation_test_evaluatesidebarvalidation",
-      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch",
-      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch_cleanenvval",
-      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating",
-      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_issidebarerrororcautionactive",
-      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulatehandlefullrefresh",
-      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulaterecoverycheck",
-      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch",
-      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_hasanysidebarfieldchanged",
-      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_issidebarerrororcautionactive",
-      "tests_sidebar_validation_test_testtradepartnermultipagevssinglepage"
     ],
     "12": [
       "agent_scripts_session_manager",
@@ -436,88 +441,75 @@
       "tests_sidebar_validation_test_testsinglefilepageactivationvsfilelistsuppression_simulatenavigation"
     ],
     "30": [
-      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory",
-      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_scansidebar",
-      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_simulateopenfile"
-    ],
-    "31": [
       "tests_sidebar_validation_test_testinvoicenumberpartitioning",
       "tests_sidebar_validation_test_testinvoicenumberpartitioning_extractinvoicenumberfromdom",
       "tests_sidebar_validation_test_testinvoicenumberpartitioning_issamedocumentinstance"
     ],
-    "32": [
+    "31": [
       "src_content_capture",
       "src_content_capture_nanoprocapture"
     ],
-    "33": [
+    "32": [
       "src_content_observer",
       "src_content_observer_nanoproobserver"
     ],
-    "34": [
+    "33": [
       "src_content_parser",
       "src_content_parser_nanoproparser"
     ],
-    "35": [
+    "34": [
       "src_content_scanner",
       "src_content_scanner_nanoproscanner"
     ],
-    "36": [
+    "35": [
       "src_content_selector",
       "src_content_selector_nanoproselector"
     ],
-    "37": [
+    "36": [
       "src_content_suggester",
       "src_content_suggester_nanoprosuggester"
     ],
-    "38": [
+    "37": [
       "src_content_tableparser",
       "src_content_tableparser_nanoprotableparser"
     ],
-    "39": [
+    "38": [
       "src_content_validator",
       "src_content_validator_nanoprovalidator"
     ],
-    "40": [
+    "39": [
       "src_ui_badge",
       "src_ui_badge_nanoprobadge"
     ],
-    "41": [
+    "40": [
       "src_ui_overlay",
       "src_ui_overlay_nanoprooverlay"
     ],
-    "42": [
+    "41": [
       "src_ui_panel",
       "src_ui_panel_nanopropanel"
     ],
-    "43": [
+    "42": [
       "tests_sidebar_validation_test_testmultipageerrortracking",
       "tests_sidebar_validation_test_testmultipageerrortracking_getmultipageerrorinfo"
     ],
-    "44": [
-      "tests_sidebar_validation_test_testpage1tablepreservationonnavigation",
-      "tests_sidebar_validation_test_testpage1tablepreservationonnavigation_attempttablelessoverwrite"
-    ],
-    "45": [
-      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage",
-      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage_simulatescanpage"
-    ],
-    "46": [
+    "43": [
       "tests_sidebar_validation_test_testpagewithouttable",
       "tests_sidebar_validation_test_testpagewithouttable_recordtablelesspage"
     ],
-    "47": [
-      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds",
-      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds_runtablerecheck"
+    "44": [
+      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows",
+      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows_renderpanelsafe"
     ],
-    "48": [
-      "tests_sidebar_validation_test_testsidepanelscrollthreshold",
-      "tests_sidebar_validation_test_testsidepanelscrollthreshold_simulatesidepanelscroll"
+    "45": [
+      "tests_sidebar_validation_test_testprioritizedpagedetection",
+      "tests_sidebar_validation_test_testprioritizedpagedetection_detectpagepriority"
     ],
-    "49": [
+    "46": [
       "tests_sidebar_validation_test_testthreenavigationtrackingmethods",
       "tests_sidebar_validation_test_testthreenavigationtrackingmethods_evaluatenavigation"
     ],
-    "50": [
+    "47": [
       "src_background"
     ]
   },
@@ -527,13 +519,13 @@
     "2": 0.08695652173913043,
     "3": 0.18128654970760233,
     "4": 0.15204678362573099,
-    "5": 0.125,
+    "5": 0.1111111111111111,
     "6": 0.26666666666666666,
     "7": 0.19047619047619047,
-    "8": 0.2692307692307692,
-    "9": 0.2727272727272727,
-    "10": 0.2909090909090909,
-    "11": 0.23636363636363636,
+    "8": 0.17582417582417584,
+    "9": 0.2692307692307692,
+    "10": 0.2727272727272727,
+    "11": 0.2909090909090909,
     "12": 0.5,
     "13": 0.2777777777777778,
     "14": 0.3888888888888889,
@@ -553,7 +545,7 @@
     "28": 0.5,
     "29": 0.8333333333333334,
     "30": 0.6666666666666666,
-    "31": 0.6666666666666666,
+    "31": 1.0,
     "32": 1.0,
     "33": 1.0,
     "34": 1.0,
@@ -569,10 +561,7 @@
     "44": 1.0,
     "45": 1.0,
     "46": 1.0,
-    "47": 1.0,
-    "48": 1.0,
-    "49": 1.0,
-    "50": 1.0
+    "47": 1.0
   },
   "gods": [
     {
@@ -596,6 +585,11 @@
       "degree": 11
     },
     {
+      "id": "src_content_index_checknavigationandpageflip",
+      "label": "checkNavigationAndPageFlip()",
+      "degree": 11
+    },
+    {
       "id": "src_content_index_initialize",
       "label": "initialize()",
       "degree": 11
@@ -608,11 +602,6 @@
     {
       "id": "src_content_index_processselection",
       "label": "processSelection()",
-      "degree": 11
-    },
-    {
-      "id": "src_content_index_checknavigationandpageflip",
-      "label": "checkNavigationAndPageFlip()",
       "degree": 11
     },
     {
@@ -650,8 +639,41 @@
       "why": "cross-file semantic connection"
     }
   ],
-  "tokens": {
-    "input": 0,
-    "output": 0
-  }
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `NanoProAutoDetector` connect `testSidebarScrollingMemory` to `index.js`?",
+      "why": "High betweenness centrality (0.034) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `isSameDocumentInstance()` connect `index.js` to `testSidebarScrollingMemory`?",
+      "why": "High betweenness centrality (0.034) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `testSidebarScrollingMemory()` connect `testSidebarScrollingMemory` to `evaluateSidebarValidation`, `sidebar_validation_test.js`?",
+      "why": "High betweenness centrality (0.021) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 2 inferred relationships involving `handleFullRefresh()` (e.g. with `boot()` and `initialize()`) actually correct?",
+      "why": "`handleFullRefresh()` has 2 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `Colors`, `Colors`, `default_title` to the rest of the system?",
+      "why": "34 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `design_system.py` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.06560283687943262 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `manifest.json` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.08695652173913043 - nodes in this community are weakly interconnected."
+    }
+  ]
 }
