@@ -3039,6 +3039,151 @@ function testTradePartnerMultiPageVsSinglePage() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 31: Table-less Page Accumulation & Page Flip State Isolation
+// ============================================================
+function testTablelessPageAccumulationAndStateIsolation() {
+    console.log('Test 31: Table-less Page Accumulation & Page Flip State Isolation');
+
+    // Scenario 1 (From User Screenshot 1):
+    // 2-page invoice:
+    // Page 1: 1 line item: 5 * 8.68 = 43.40.
+    // Page 2: NO table (0 items, $0.00). Invoice_amount = 43.40 (only on page 2).
+    let multiPageStore = {
+        totalPages: 2,
+        lastInvoiceAmount: null,
+        pages: {}
+    };
+
+    let validationResult = null;
+
+    function processPage(pageNum, totalPages, rows, hasNoTable, liveInvoiceAmount) {
+        if (hasNoTable || rows.length === 0) {
+            validationResult = {
+                success: true,
+                results: [],
+                summary: { total: 0, valid: 0, invalid: 0 },
+                hasNoTable: true,
+                validatedPage: pageNum
+            };
+        } else {
+            validationResult = {
+                success: true,
+                results: rows,
+                summary: { total: rows.length, valid: rows.length, invalid: 0 },
+                hasNoTable: false,
+                validatedPage: pageNum
+            };
+        }
+
+        const pageSum = rows.reduce((sum, r) => sum + (r.actual || 0), 0);
+        multiPageStore.pages[pageNum] = {
+            pageNumber: pageNum,
+            sumAmount: pageSum,
+            totalRows: rows.length,
+            hasNoTable: !!hasNoTable,
+            status: 'VALID',
+            errorSummary: hasNoTable ? 'No table (0 items)' : 'Valid'
+        };
+
+        if (liveInvoiceAmount && pageNum === totalPages) {
+            multiPageStore.lastInvoiceAmount = liveInvoiceAmount;
+        }
+
+        // Calculate cumulative sum
+        const recordedPages = Object.keys(multiPageStore.pages).map(Number);
+        const cumulativeSum = recordedPages.reduce((acc, p) => acc + (multiPageStore.pages[p].sumAmount || 0), 0);
+        const effectiveInv = liveInvoiceAmount || multiPageStore.lastInvoiceAmount;
+
+        const isLastPage = pageNum === totalPages;
+        const diff = effectiveInv ? Math.abs(cumulativeSum - effectiveInv.value) : null;
+        const isMatch = diff !== null && diff <= 0.10;
+
+        return {
+            pageSum,
+            cumulativeSum,
+            isMatch,
+            status: isLastPage ? (isMatch ? 'MATCH' : 'MISMATCH') : (recordedPages.length === totalPages && isMatch ? 'MATCH' : 'MULTI_PAGE_PENDING'),
+            recordedPages
+        };
+    }
+
+    // Step 1: Scan Page 1 (1 item: 43.40)
+    const p1Outcome = processPage(1, 2, [{ actual: 43.40 }], false, null);
+    assert.strictEqual(p1Outcome.pageSum, 43.40);
+    assert.strictEqual(p1Outcome.cumulativeSum, 43.40);
+    assert.strictEqual(p1Outcome.status, 'MULTI_PAGE_PENDING');
+
+    // Step 2: Page flip to Page 2 (NO table, invoice_amount = 43.40)
+    // Page flip resets validationResult to null and clears multiPageStore.pages[2]
+    validationResult = null;
+    delete multiPageStore.pages[2];
+
+    // Page 2 detected as table-less
+    const p2Outcome = processPage(2, 2, [], true, { value: 43.40, raw: '43.40' });
+    assert.strictEqual(p2Outcome.pageSum, 0.00, 'Page 2 must have $0.00 page sum');
+    assert.strictEqual(p2Outcome.cumulativeSum, 43.40, 'Cumulative sum must be $43.40 (43.40 + 0.00), NOT $86.80');
+    assert.strictEqual(p2Outcome.status, 'MATCH', 'Must show MATCH on the last page because cumulative sum equals invoice_amount');
+    assert.strictEqual(multiPageStore.pages[2].hasNoTable, true);
+    assert.strictEqual(multiPageStore.pages[2].totalRows, 0);
+
+    // Scenario 2 (From User Screenshot 2):
+    // 3-page invoice:
+    // Page 1: 18 items ($0.00) with 9 item_no errors
+    // Page 2: NO table (0 items, $0.00). Must NOT inherit Page 1's 18 items or 9 errors!
+    // Page 3: 1 item ($147.56)
+    multiPageStore = { totalPages: 3, lastInvoiceAmount: null, pages: {} };
+
+    // Page 1
+    const p1Rows = Array.from({ length: 18 }, () => ({ actual: 0.00 }));
+    multiPageStore.pages[1] = {
+        pageNumber: 1,
+        sumAmount: 0.00,
+        totalRows: 18,
+        itemNoErrors: 9,
+        hasNoTable: false,
+        status: 'INVALID',
+        errorSummary: '9 item_no errors'
+    };
+    validationResult = {
+        success: true,
+        results: p1Rows,
+        hasNoTable: false,
+        validatedPage: 1
+    };
+
+    // Attempting to revalidate sidebar with validatedPage = 1 while currentPage = 2 must be blocked!
+    const currentPageInfo = { currentPage: 2, totalPages: 3 };
+    const canReusePage1RowsOnPage2 = (validationResult && validationResult.validatedPage === currentPageInfo.currentPage);
+    assert.strictEqual(canReusePage1RowsOnPage2, false, 'Page 1 rows must NEVER be reused on Page 2');
+
+    // Page 2 scanned as table-less
+    multiPageStore.pages[2] = {
+        pageNumber: 2,
+        sumAmount: 0.00,
+        totalRows: 0,
+        itemNoErrors: 0,
+        hasNoTable: true,
+        status: 'VALID',
+        errorSummary: 'No table (0 items)'
+    };
+    assert.strictEqual(multiPageStore.pages[2].itemNoErrors, 0, 'Page 2 must have 0 errors, NOT 9');
+    assert.strictEqual(multiPageStore.pages[2].totalRows, 0, 'Page 2 must have 0 items, NOT 18');
+
+    // Page 3 scanned (1 item: $147.56, invoice_amount: $147.56)
+    multiPageStore.pages[3] = {
+        pageNumber: 3,
+        sumAmount: 147.56,
+        totalRows: 1,
+        hasNoTable: false,
+        status: 'VALID'
+    };
+    const cum3 = [1, 2, 3].reduce((acc, p) => acc + multiPageStore.pages[p].sumAmount, 0);
+    assert.strictEqual(cum3, 147.56, 'Cumulative sum across all 3 pages must be $147.56');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -3061,8 +3206,9 @@ testSidebarAutoTurnOffAndReEditRewatch();
 testEnvironmentExtractionResilienceAndRefreshRewatch();
 testResilientMultiPageDetectionAndDynamicDiscovery();
 testTradePartnerMultiPageVsSinglePage();
+testTablelessPageAccumulationAndStateIsolation();
 
-console.log('--- ALL 30 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 31 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 

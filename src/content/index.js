@@ -895,7 +895,7 @@
             runAutoDetection(0, true /* isBackgroundPoll */, true /* force */);
         } else if (lastSelection) {
             processSelection(lastSelection);
-        } else if (validationResult) {
+        } else if (validationResult && validationResult.validatedPage === getEffectiveSidebarFields().pageInfo?.currentPage) {
             const currentRows = validationResult.results ? 
                 validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
             processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
@@ -966,23 +966,28 @@
                     const existingPageData = multiPageStore.pages?.[pageNum];
                     const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
 
-                    if (isDocPage && !hadExistingTable) {
-                        // Quick wait of 1 retry (150ms) for table to render if page just transitioned
+                    if (isDocPage) {
                         const maxTableWait = 1;
-                        if (retryCount < maxTableWait && !isBackgroundPoll) {
-                            console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
-                            autoDetectTimer = setTimeout(
-                                () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
-                                150
-                            );
+                        if (!hadExistingTable || !isBackgroundPoll) {
+                            if (retryCount < maxTableWait && !isBackgroundPoll) {
+                                console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
+                                autoDetectTimer = setTimeout(
+                                    () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
+                                    150
+                                );
+                                return;
+                            }
+
+                            // Table did not appear after settling — legitimately a table-less document page!
+                            const currentTablelessHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
+                            if (currentTablelessHash === lastDetectedStateHash && !force && validationResult && validationResult.hasNoTable) {
+                                return;
+                            }
+                            console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
+                            lastDetectedStateHash = currentTablelessHash;
+                            processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
                             return;
                         }
-
-                        // Table did not appear — legitimately a table-less document page!
-                        console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo.totalPages}) has no table. Processing as 0-row page...`);
-                        lastDetectedStateHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
-                        processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
-                        return;
                     }
                 }
 
@@ -999,9 +1004,12 @@
                 // CRITICAL: If we already have a valid validationResult,
                 // NEVER wipe the badge to "No Data Found" due to temporary detection misses or DOM debounce!
                 if (validationResult && validationResult.summary && validationResult.summary.total >= 0 && validationResult.success) {
-                    console.log('[NanoPro v3] Preserving existing valid state despite temporary detection miss');
-                    updateUI(validationResult);
-                    return;
+                    const currentP = getEffectiveSidebarFields().pageInfo?.currentPage || 1;
+                    if (!validationResult.validatedPage || validationResult.validatedPage === currentP) {
+                        console.log('[NanoPro v3] Preserving existing valid state despite temporary detection miss');
+                        updateUI(validationResult);
+                        return;
+                    }
                 }
 
                 // If on a single file page and still loading in background, don't prematurely flash No Data
@@ -1084,6 +1092,7 @@
                 results: [],
                 summary: { total: 0, valid: 0, invalid: 0, incomplete: 0, caution: 0 },
                 hasNoTable: true,
+                validatedPage: currentPage,
                 validRows: [],
                 invalidRows: []
             };
@@ -1104,6 +1113,7 @@
 
             // Validate calculations
             validationResult = NanoProValidator.validateAll(validationRows);
+            validationResult.validatedPage = currentPage;
 
             if (!validationResult.success) {
                 console.error('[NanoPro v3] Validation failed:', validationResult.error);
@@ -1932,7 +1942,7 @@
                 runAutoDetection(0, false, true /* force */);
             } else if (validationResult && lastSelection) {
                 processSelection(lastSelection);
-            } else if (validationResult) {
+            } else if (validationResult && validationResult.validatedPage === getEffectiveSidebarFields().pageInfo?.currentPage) {
                 const currentRows = validationResult.results ? 
                     validationResult.results.map(r => ({ qty: r.qty, price: r.price, amount: r.actual, item_no: r.itemNoValue })) : [];
                 processAutoDetectedRows(currentRows, {}, getEffectiveSidebarFields(), validationResult.hasNoTable || false);
@@ -2336,11 +2346,13 @@
         console.log(`[NanoPro v3] Handling page flip to Page ${newPageInfo.currentPage}...`);
         sidebarMemory.pageInfo = newPageInfo;
         lastDetectedStateHash = null;
+        validationResult = null;
+        delete multiPageStore.pages[newPageInfo.currentPage];
         NanoProBadge.setLoading();
         if (currentMode === 'auto') {
             clearAutoDetect();
-            // Fast execution: 100ms delay, max 2 retries (300ms max)
-            autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 2), 100);
+            // Fast execution: 250ms delay to allow DOM transition to settle, max 3 retries
+            autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 3), 250);
             startTablePolling();
         }
     }
@@ -2409,6 +2421,7 @@
             // Retain multiPageStore and sidebarMemory! Re-run detection on the new page.
             sidebarMemory.pageInfo = null; // Clear cached pageInfo so new page is detected!
             lastDetectedStateHash = null; // Clear hash so it doesn't short-circuit!
+            validationResult = null;
             NanoProBadge.setLoading();
             if (currentMode === 'auto') {
                 scheduleAutoDetect(8);

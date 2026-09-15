@@ -58,6 +58,9 @@
 10. **Multi-Strategy Resilient Environment Extraction**:
    - Multi-strategy detection guarantees `Environment` extraction across dedicated inputs (`input[name*="environment"]`), `data-testid` elements with adjacent sibling value boxes, and label scans across all element types with punctuation stripping (colons, asterisks).
    - Prevents label collisions and eliminates false Environment error locks.
+11. **Multi-Page Table-less Page Isolation & Cumulative Totals**:
+   - Cleanly isolates table-less pages (e.g. summary/signature/terms pages) as $0.00 (0 items) without stale row bleeding or error copying from adjacent pages.
+   - Correctly matches the cumulative line item total across all pages against the last-page `invoice_amount`.
 
 ---
 
@@ -80,7 +83,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 30 validation test suites)
+# Run the automated test suite (all 31 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

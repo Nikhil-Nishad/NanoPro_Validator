@@ -1,0 +1,679 @@
+{
+  "communities": {
+    "0": [
+      "agent_shared_ui_ux_pro_max_scripts_core",
+      "agent_shared_ui_ux_pro_max_scripts_core_detect_domain",
+      "agent_shared_ui_ux_pro_max_scripts_core_load_csv",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_164",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_170",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_195",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_218",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_240",
+      "agent_shared_ui_ux_pro_max_scripts_core_search",
+      "agent_shared_ui_ux_pro_max_scripts_core_search_csv",
+      "agent_shared_ui_ux_pro_max_scripts_core_search_stack",
+      "agent_shared_ui_ux_pro_max_scripts_design_system",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_apply_reasoning",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_extract_results",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_find_reasoning_rule",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_generate",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_init",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_load_reasoning",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_multi_domain_search",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator_select_best_match",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_detect_page_type",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_format_ascii_box",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_format_markdown",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_format_master_md",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_format_page_override_md",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_generate_design_system",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_generate_intelligent_overrides",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_persist_design_system",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_1021",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_123",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_160",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_164",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_243",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_368",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_38",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_44",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_464",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_492",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_52",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_543",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_65",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_806",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_89",
+      "agent_shared_ui_ux_pro_max_scripts_design_system_rationale_915",
+      "agent_shared_ui_ux_pro_max_scripts_search",
+      "agent_shared_ui_ux_pro_max_scripts_search_format_output",
+      "agent_shared_ui_ux_pro_max_scripts_search_rationale_23"
+    ],
+    "1": [
+      "src_content_index",
+      "src_content_index_attachitemnovalidation",
+      "src_content_index_attachsidebarvalidation",
+      "src_content_index_attachtotalvalidation",
+      "src_content_index_boot",
+      "src_content_index_checknavigationandpageflip",
+      "src_content_index_checksidebarerrorrecovery",
+      "src_content_index_checksidebarwatchandrecovery",
+      "src_content_index_cleanup",
+      "src_content_index_clearautodetect",
+      "src_content_index_geteffectivesidebarfields",
+      "src_content_index_handlefullrefresh",
+      "src_content_index_handlenavigation",
+      "src_content_index_handlepageflip",
+      "src_content_index_handlerefresh",
+      "src_content_index_handlesidepanelscroll",
+      "src_content_index_handleuserinput",
+      "src_content_index_hasanysidebarfieldchanged",
+      "src_content_index_initialize",
+      "src_content_index_isnanonetspage",
+      "src_content_index_issamedocumentinstance",
+      "src_content_index_issidebarerrororcautionactive",
+      "src_content_index_issidepanelelement",
+      "src_content_index_issinglefilepage",
+      "src_content_index_loadmode",
+      "src_content_index_processautodetectedrows",
+      "src_content_index_processselection",
+      "src_content_index_resetstate",
+      "src_content_index_revalidatefromlivesidebar",
+      "src_content_index_runautodetection",
+      "src_content_index_savemode",
+      "src_content_index_scanandremembersidebarfields",
+      "src_content_index_scheduleautodetect",
+      "src_content_index_setupinputlisteners",
+      "src_content_index_setupmutationobserver",
+      "src_content_index_setupnavigationwatcher",
+      "src_content_index_setupscrollcapture",
+      "src_content_index_showcolumnselectionui",
+      "src_content_index_startselectionmode",
+      "src_content_index_starttablepolling",
+      "src_content_index_stoptablepolling",
+      "src_content_index_teardowninputlisteners",
+      "src_content_index_teardownmutationobserver",
+      "src_content_index_togglemode",
+      "src_content_index_updatebadgeformode",
+      "src_content_index_updatebadgestate",
+      "src_content_index_updateui"
+    ],
+    "2": [
+      "manifest",
+      "manifest_action",
+      "manifest_action_default_icon",
+      "manifest_action_default_title",
+      "manifest_author",
+      "manifest_background",
+      "manifest_background_service_worker",
+      "manifest_content_scripts",
+      "manifest_default_icon_16",
+      "manifest_default_icon_48",
+      "manifest_description",
+      "manifest_host_permissions",
+      "manifest_icons",
+      "manifest_icons_128",
+      "manifest_icons_16",
+      "manifest_icons_48",
+      "manifest_manifest_version",
+      "manifest_name",
+      "manifest_permissions",
+      "manifest_version",
+      "ref_activetab",
+      "ref_https_app_nanonets_com",
+      "ref_storage"
+    ],
+    "3": [
+      "agent_scripts_verify_all",
+      "agent_scripts_verify_all_colors",
+      "agent_scripts_verify_all_main",
+      "agent_scripts_verify_all_print_error",
+      "agent_scripts_verify_all_print_final_report",
+      "agent_scripts_verify_all_print_header",
+      "agent_scripts_verify_all_print_step",
+      "agent_scripts_verify_all_print_success",
+      "agent_scripts_verify_all_print_warning",
+      "agent_scripts_verify_all_py_path",
+      "agent_scripts_verify_all_rationale_151",
+      "agent_scripts_verify_all_rationale_203",
+      "agent_scripts_verify_all_run_script",
+      "agent_skills_webapp_testing_scripts_playwright_runner",
+      "agent_skills_webapp_testing_scripts_playwright_runner_rationale_116",
+      "agent_skills_webapp_testing_scripts_playwright_runner_rationale_32",
+      "agent_skills_webapp_testing_scripts_playwright_runner_run_accessibility_check",
+      "agent_skills_webapp_testing_scripts_playwright_runner_run_basic_test",
+      "datetime"
+    ],
+    "4": [
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_main",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_barrel_imports",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_dynamic_imports",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_image_optimization",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_missing_memoization",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_useeffect_fetching",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_check_waterfalls",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_generate_report",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_init",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker_run",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_108",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_132",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_159",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_182",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_22",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_47",
+      "agent_skills_nextjs_react_expert_scripts_react_performance_checker_rationale_73"
+    ],
+    "5": [
+      "tests_sidebar_validation_test",
+      "tests_sidebar_validation_test_assert",
+      "tests_sidebar_validation_test_evaluateitemnovalidation",
+      "tests_sidebar_validation_test_evaluatetotalvalidation",
+      "tests_sidebar_validation_test_fallbackpageinfo",
+      "tests_sidebar_validation_test_parsepageinfofromtext",
+      "tests_sidebar_validation_test_testitemnowhitespaceprohibition",
+      "tests_sidebar_validation_test_testmultipagetotalplacement",
+      "tests_sidebar_validation_test_testmultipagetotalplacement_evaluatepagetotal",
+      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage",
+      "tests_sidebar_validation_test_testpagetransitionwithtablelesspage_simulatescanpage",
+      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds",
+      "tests_sidebar_validation_test_testperiodictablerecheckevery1to2seconds_runtablerecheck",
+      "tests_sidebar_validation_test_testsidepanelscrollthreshold",
+      "tests_sidebar_validation_test_testsidepanelscrollthreshold_simulatesidepanelscroll",
+      "tests_sidebar_validation_test_testtablelesspageaccumulationandstateisolation",
+      "tests_sidebar_validation_test_testtablelesspageaccumulationandstateisolation_processpage",
+      "tests_sidebar_validation_test_testvalidstatepreservedagainsttemporarydetectionmiss",
+      "tests_sidebar_validation_test_testvalidstatepreservedagainsttemporarydetectionmiss_simulatedetectionattempt"
+    ],
+    "6": [
+      "agent_scripts_checklist",
+      "agent_scripts_checklist_check_script_exists",
+      "agent_scripts_checklist_colors",
+      "agent_scripts_checklist_main",
+      "agent_scripts_checklist_print_error",
+      "agent_scripts_checklist_print_header",
+      "agent_scripts_checklist_print_step",
+      "agent_scripts_checklist_print_success",
+      "agent_scripts_checklist_print_summary",
+      "agent_scripts_checklist_print_warning",
+      "agent_scripts_checklist_py_path",
+      "agent_scripts_checklist_rationale_129",
+      "agent_scripts_checklist_rationale_73",
+      "agent_scripts_checklist_rationale_77",
+      "agent_scripts_checklist_run_script"
+    ],
+    "7": [
+      "manifest_commands",
+      "manifest_commands_reset_extension",
+      "manifest_commands_start_selection",
+      "manifest_commands_toggle_mode",
+      "manifest_commands_toggle_panel",
+      "manifest_reset_extension_description",
+      "manifest_reset_extension_suggested_key",
+      "manifest_start_selection_description",
+      "manifest_start_selection_suggested_key",
+      "manifest_suggested_key_default",
+      "manifest_suggested_key_mac",
+      "manifest_toggle_mode_description",
+      "manifest_toggle_mode_suggested_key",
+      "manifest_toggle_panel_description",
+      "manifest_toggle_panel_suggested_key"
+    ],
+    "8": [
+      "tests_sidebar_validation_test_evaluatesidebarvalidation",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_scansidebar",
+      "tests_sidebar_validation_test_testcrossdocumentenvironmentmemory_simulateopenfile",
+      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch",
+      "tests_sidebar_validation_test_testenvironmentextractionresilienceandrefreshrewatch_cleanenvval",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_issidebarerrororcautionactive",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulatehandlefullrefresh",
+      "tests_sidebar_validation_test_testfullreverificationandsidebarrecoverygating_simulaterecoverycheck",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_hasanysidebarfieldchanged",
+      "tests_sidebar_validation_test_testsidebarautoturnoffandreeditrewatch_issidebarerrororcautionactive",
+      "tests_sidebar_validation_test_testtradepartnermultipagevssinglepage"
+    ],
+    "9": [
+      "agent_skills_vulnerability_scanner_scripts_security_scan",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_main",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_py_any",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_rationale_182",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_rationale_237",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_rationale_297",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_rationale_373",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_rationale_98",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_run_full_scan",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_scan_code_patterns",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_scan_configuration",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_scan_dependencies",
+      "agent_skills_vulnerability_scanner_scripts_security_scan_scan_secrets"
+    ],
+    "10": [
+      "agent_skills_nextjs_react_expert_scripts_convert_rules",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_generate_section_file",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_group_rules_by_section",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_main",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_parse_frontmatter",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_parse_rule_file",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_py_path",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_109",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_129",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_186",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_66",
+      "agent_skills_nextjs_react_expert_scripts_convert_rules_rationale_86"
+    ],
+    "11": [
+      "agent_skills_i18n_localization_scripts_i18n_checker",
+      "agent_skills_i18n_localization_scripts_i18n_checker_check_hardcoded_strings",
+      "agent_skills_i18n_localization_scripts_i18n_checker_check_locale_completeness",
+      "agent_skills_i18n_localization_scripts_i18n_checker_find_locale_files",
+      "agent_skills_i18n_localization_scripts_i18n_checker_flatten_keys",
+      "agent_skills_i18n_localization_scripts_i18n_checker_main",
+      "agent_skills_i18n_localization_scripts_i18n_checker_py_path",
+      "agent_skills_i18n_localization_scripts_i18n_checker_rationale_121",
+      "agent_skills_i18n_localization_scripts_i18n_checker_rationale_132",
+      "agent_skills_i18n_localization_scripts_i18n_checker_rationale_54",
+      "agent_skills_i18n_localization_scripts_i18n_checker_rationale_71"
+    ],
+    "12": [
+      "agent_scripts_session_manager",
+      "agent_scripts_session_manager_analyze_package_json",
+      "agent_scripts_session_manager_count_files",
+      "agent_scripts_session_manager_detect_features",
+      "agent_scripts_session_manager_get_project_root",
+      "agent_scripts_session_manager_main",
+      "agent_scripts_session_manager_print_status",
+      "agent_scripts_session_manager_py_any",
+      "agent_scripts_session_manager_py_path"
+    ],
+    "13": [
+      "agent_shared_ui_ux_pro_max_scripts_core_bm25",
+      "agent_shared_ui_ux_pro_max_scripts_core_bm25_fit",
+      "agent_shared_ui_ux_pro_max_scripts_core_bm25_init",
+      "agent_shared_ui_ux_pro_max_scripts_core_bm25_score",
+      "agent_shared_ui_ux_pro_max_scripts_core_bm25_tokenize",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_101",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_114",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_119",
+      "agent_shared_ui_ux_pro_max_scripts_core_rationale_138"
+    ],
+    "14": [
+      "agent_skills_api_patterns_scripts_api_validator",
+      "agent_skills_api_patterns_scripts_api_validator_check_api_code",
+      "agent_skills_api_patterns_scripts_api_validator_check_openapi_spec",
+      "agent_skills_api_patterns_scripts_api_validator_find_api_files",
+      "agent_skills_api_patterns_scripts_api_validator_main",
+      "agent_skills_api_patterns_scripts_api_validator_py_path",
+      "agent_skills_api_patterns_scripts_api_validator_rationale_19",
+      "agent_skills_api_patterns_scripts_api_validator_rationale_38",
+      "agent_skills_api_patterns_scripts_api_validator_rationale_95"
+    ],
+    "15": [
+      "agent_skills_geo_fundamentals_scripts_geo_checker",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_check_page",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_find_web_pages",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_is_page_file",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_main",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_py_path",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_rationale_100",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_rationale_48",
+      "agent_skills_geo_fundamentals_scripts_geo_checker_rationale_82"
+    ],
+    "16": [
+      "agent_skills_seo_fundamentals_scripts_seo_checker",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_check_page",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_find_pages",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_is_page_file",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_main",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_py_path",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_rationale_49",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_rationale_79",
+      "agent_skills_seo_fundamentals_scripts_seo_checker_rationale_97"
+    ],
+    "17": [
+      "agent_scripts_auto_preview",
+      "agent_scripts_auto_preview_get_project_root",
+      "agent_scripts_auto_preview_get_start_command",
+      "agent_scripts_auto_preview_is_running",
+      "agent_scripts_auto_preview_main",
+      "agent_scripts_auto_preview_start_server",
+      "agent_scripts_auto_preview_status_server",
+      "agent_scripts_auto_preview_stop_server"
+    ],
+    "18": [
+      "agent_skills_database_design_scripts_schema_validator",
+      "agent_skills_database_design_scripts_schema_validator_find_schema_files",
+      "agent_skills_database_design_scripts_schema_validator_main",
+      "agent_skills_database_design_scripts_schema_validator_py_path",
+      "agent_skills_database_design_scripts_schema_validator_rationale_30",
+      "agent_skills_database_design_scripts_schema_validator_rationale_48",
+      "agent_skills_database_design_scripts_schema_validator_validate_prisma_schema"
+    ],
+    "19": [
+      "agent_skills_frontend_design_scripts_accessibility_checker",
+      "agent_skills_frontend_design_scripts_accessibility_checker_check_accessibility",
+      "agent_skills_frontend_design_scripts_accessibility_checker_find_html_files",
+      "agent_skills_frontend_design_scripts_accessibility_checker_main",
+      "agent_skills_frontend_design_scripts_accessibility_checker_py_path",
+      "agent_skills_frontend_design_scripts_accessibility_checker_rationale_31",
+      "agent_skills_frontend_design_scripts_accessibility_checker_rationale_45"
+    ],
+    "20": [
+      "agent_skills_frontend_design_scripts_ux_audit",
+      "agent_skills_frontend_design_scripts_ux_audit_main",
+      "agent_skills_frontend_design_scripts_ux_audit_uxauditor",
+      "agent_skills_frontend_design_scripts_ux_audit_uxauditor_audit_directory",
+      "agent_skills_frontend_design_scripts_ux_audit_uxauditor_audit_file",
+      "agent_skills_frontend_design_scripts_ux_audit_uxauditor_get_report",
+      "agent_skills_frontend_design_scripts_ux_audit_uxauditor_init"
+    ],
+    "21": [
+      "agent_skills_lint_and_validate_scripts_lint_runner",
+      "agent_skills_lint_and_validate_scripts_lint_runner_detect_project_type",
+      "agent_skills_lint_and_validate_scripts_lint_runner_main",
+      "agent_skills_lint_and_validate_scripts_lint_runner_py_path",
+      "agent_skills_lint_and_validate_scripts_lint_runner_rationale_30",
+      "agent_skills_lint_and_validate_scripts_lint_runner_rationale_73",
+      "agent_skills_lint_and_validate_scripts_lint_runner_run_linter"
+    ],
+    "22": [
+      "agent_skills_lint_and_validate_scripts_type_coverage",
+      "agent_skills_lint_and_validate_scripts_type_coverage_check_python_coverage",
+      "agent_skills_lint_and_validate_scripts_type_coverage_check_typescript_coverage",
+      "agent_skills_lint_and_validate_scripts_type_coverage_main",
+      "agent_skills_lint_and_validate_scripts_type_coverage_py_path",
+      "agent_skills_lint_and_validate_scripts_type_coverage_rationale_19",
+      "agent_skills_lint_and_validate_scripts_type_coverage_rationale_75"
+    ],
+    "23": [
+      "agent_skills_mobile_design_scripts_mobile_audit",
+      "agent_skills_mobile_design_scripts_mobile_audit_main",
+      "agent_skills_mobile_design_scripts_mobile_audit_mobileauditor",
+      "agent_skills_mobile_design_scripts_mobile_audit_mobileauditor_audit_directory",
+      "agent_skills_mobile_design_scripts_mobile_audit_mobileauditor_audit_file",
+      "agent_skills_mobile_design_scripts_mobile_audit_mobileauditor_get_report",
+      "agent_skills_mobile_design_scripts_mobile_audit_mobileauditor_init"
+    ],
+    "24": [
+      "agent_skills_testing_patterns_scripts_test_runner",
+      "agent_skills_testing_patterns_scripts_test_runner_detect_test_framework",
+      "agent_skills_testing_patterns_scripts_test_runner_main",
+      "agent_skills_testing_patterns_scripts_test_runner_py_path",
+      "agent_skills_testing_patterns_scripts_test_runner_rationale_28",
+      "agent_skills_testing_patterns_scripts_test_runner_rationale_80",
+      "agent_skills_testing_patterns_scripts_test_runner_run_tests"
+    ],
+    "25": [
+      "src_content_autodetector",
+      "src_content_autodetector_nanoproautodetector",
+      "tests_sidebar_validation_test_testdocumentinstancematching",
+      "tests_sidebar_validation_test_testsidebarscrollingmemory",
+      "tests_sidebar_validation_test_testsidebarscrollingmemory_geteffectivefields",
+      "tests_sidebar_validation_test_testsidebarscrollingmemory_scanandremember"
+    ],
+    "26": [
+      "agent_skills_performance_profiling_scripts_lighthouse_audit",
+      "agent_skills_performance_profiling_scripts_lighthouse_audit_get_summary",
+      "agent_skills_performance_profiling_scripts_lighthouse_audit_rationale_17",
+      "agent_skills_performance_profiling_scripts_lighthouse_audit_rationale_61",
+      "agent_skills_performance_profiling_scripts_lighthouse_audit_run_lighthouse"
+    ],
+    "27": [
+      "tests_sidebar_validation_test_testcolumnisolationandstrictheaders",
+      "tests_sidebar_validation_test_testcolumnisolationandstrictheaders_assigncell",
+      "tests_sidebar_validation_test_testcolumnisolationandstrictheaders_getheaderforinput",
+      "tests_sidebar_validation_test_testcolumnisolationandstrictheaders_mapheaderstest"
+    ],
+    "28": [
+      "tests_sidebar_validation_test_testresilientmultipagedetectionanddynamicdiscovery",
+      "tests_sidebar_validation_test_testresilientmultipagedetectionanddynamicdiscovery_resolveeffectivepage",
+      "tests_sidebar_validation_test_testresilientmultipagedetectionanddynamicdiscovery_tests1pager",
+      "tests_sidebar_validation_test_testresilientmultipagedetectionanddynamicdiscovery_testthumbnailstripsafety"
+    ],
+    "29": [
+      "tests_sidebar_validation_test_testsinglefilepageactivationvsfilelistsuppression",
+      "tests_sidebar_validation_test_testsinglefilepageactivationvsfilelistsuppression_checkissinglefilepage",
+      "tests_sidebar_validation_test_testsinglefilepageactivationvsfilelistsuppression_isappnanonets",
+      "tests_sidebar_validation_test_testsinglefilepageactivationvsfilelistsuppression_simulatenavigation"
+    ],
+    "30": [
+      "tests_sidebar_validation_test_testinvoicenumberpartitioning",
+      "tests_sidebar_validation_test_testinvoicenumberpartitioning_extractinvoicenumberfromdom",
+      "tests_sidebar_validation_test_testinvoicenumberpartitioning_issamedocumentinstance"
+    ],
+    "31": [
+      "src_content_capture",
+      "src_content_capture_nanoprocapture"
+    ],
+    "32": [
+      "src_content_observer",
+      "src_content_observer_nanoproobserver"
+    ],
+    "33": [
+      "src_content_parser",
+      "src_content_parser_nanoproparser"
+    ],
+    "34": [
+      "src_content_scanner",
+      "src_content_scanner_nanoproscanner"
+    ],
+    "35": [
+      "src_content_selector",
+      "src_content_selector_nanoproselector"
+    ],
+    "36": [
+      "src_content_suggester",
+      "src_content_suggester_nanoprosuggester"
+    ],
+    "37": [
+      "src_content_tableparser",
+      "src_content_tableparser_nanoprotableparser"
+    ],
+    "38": [
+      "src_content_validator",
+      "src_content_validator_nanoprovalidator"
+    ],
+    "39": [
+      "src_ui_badge",
+      "src_ui_badge_nanoprobadge"
+    ],
+    "40": [
+      "src_ui_overlay",
+      "src_ui_overlay_nanoprooverlay"
+    ],
+    "41": [
+      "src_ui_panel",
+      "src_ui_panel_nanopropanel"
+    ],
+    "42": [
+      "tests_sidebar_validation_test_testmultipageerrortracking",
+      "tests_sidebar_validation_test_testmultipageerrortracking_getmultipageerrorinfo"
+    ],
+    "43": [
+      "tests_sidebar_validation_test_testpagewithouttable",
+      "tests_sidebar_validation_test_testpagewithouttable_recordtablelesspage"
+    ],
+    "44": [
+      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows",
+      "tests_sidebar_validation_test_testpanelrendersafewithemptyvalidrows_renderpanelsafe"
+    ],
+    "45": [
+      "tests_sidebar_validation_test_testprioritizedpagedetection",
+      "tests_sidebar_validation_test_testprioritizedpagedetection_detectpagepriority"
+    ],
+    "46": [
+      "tests_sidebar_validation_test_testthreenavigationtrackingmethods",
+      "tests_sidebar_validation_test_testthreenavigationtrackingmethods_evaluatenavigation"
+    ],
+    "47": [
+      "src_background"
+    ]
+  },
+  "cohesion": {
+    "0": 0.06560283687943262,
+    "1": 0.15263644773358,
+    "2": 0.08695652173913043,
+    "3": 0.18128654970760233,
+    "4": 0.15204678362573099,
+    "5": 0.1111111111111111,
+    "6": 0.26666666666666666,
+    "7": 0.19047619047619047,
+    "8": 0.17582417582417584,
+    "9": 0.2692307692307692,
+    "10": 0.2727272727272727,
+    "11": 0.2909090909090909,
+    "12": 0.5,
+    "13": 0.2777777777777778,
+    "14": 0.3888888888888889,
+    "15": 0.3888888888888889,
+    "16": 0.3888888888888889,
+    "17": 0.5357142857142857,
+    "18": 0.47619047619047616,
+    "19": 0.47619047619047616,
+    "20": 0.38095238095238093,
+    "21": 0.47619047619047616,
+    "22": 0.47619047619047616,
+    "23": 0.38095238095238093,
+    "24": 0.47619047619047616,
+    "25": 0.3333333333333333,
+    "26": 0.5,
+    "27": 0.5,
+    "28": 0.5,
+    "29": 0.8333333333333334,
+    "30": 0.6666666666666666,
+    "31": 1.0,
+    "32": 1.0,
+    "33": 1.0,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0,
+    "41": 1.0,
+    "42": 1.0,
+    "43": 1.0,
+    "44": 1.0,
+    "45": 1.0,
+    "46": 1.0,
+    "47": 1.0
+  },
+  "gods": [
+    {
+      "id": "src_content_index_runautodetection",
+      "label": "runAutoDetection()",
+      "degree": 13
+    },
+    {
+      "id": "src_content_index_handlefullrefresh",
+      "label": "handleFullRefresh()",
+      "degree": 12
+    },
+    {
+      "id": "agent_shared_ui_ux_pro_max_scripts_design_system_designsystemgenerator",
+      "label": "DesignSystemGenerator",
+      "degree": 11
+    },
+    {
+      "id": "agent_skills_nextjs_react_expert_scripts_react_performance_checker_performancechecker",
+      "label": "PerformanceChecker",
+      "degree": 11
+    },
+    {
+      "id": "src_content_index_checknavigationandpageflip",
+      "label": "checkNavigationAndPageFlip()",
+      "degree": 11
+    },
+    {
+      "id": "src_content_index_initialize",
+      "label": "initialize()",
+      "degree": 11
+    },
+    {
+      "id": "src_content_index_processautodetectedrows",
+      "label": "processAutoDetectedRows()",
+      "degree": 11
+    },
+    {
+      "id": "src_content_index_processselection",
+      "label": "processSelection()",
+      "degree": 11
+    },
+    {
+      "id": "src_content_index_setupscrollcapture",
+      "label": "setupScrollCapture()",
+      "degree": 10
+    },
+    {
+      "id": "src_content_index_togglemode",
+      "label": "toggleMode()",
+      "degree": 10
+    }
+  ],
+  "surprises": [
+    {
+      "source": "NanoProAutoDetector",
+      "target": "isSameDocumentInstance()",
+      "source_files": [
+        "src/content/autoDetector.js",
+        "src/content/index.js"
+      ],
+      "confidence": "INFERRED",
+      "relation": "indirect_call",
+      "why": "inferred connection - not explicitly stated in source; bridges separate communities; peripheral node `NanoProAutoDetector` unexpectedly reaches hub `isSameDocumentInstance()`"
+    },
+    {
+      "source": "_generate_intelligent_overrides()",
+      "target": "search()",
+      "source_files": [
+        ".agent/.shared/ui-ux-pro-max/scripts/design_system.py",
+        ".agent/.shared/ui-ux-pro-max/scripts/core.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "cross-file semantic connection"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `NanoProAutoDetector` connect `testSidebarScrollingMemory` to `index.js`?",
+      "why": "High betweenness centrality (0.034) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `isSameDocumentInstance()` connect `index.js` to `testSidebarScrollingMemory`?",
+      "why": "High betweenness centrality (0.034) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `testSidebarScrollingMemory()` connect `testSidebarScrollingMemory` to `evaluateSidebarValidation`, `sidebar_validation_test.js`?",
+      "why": "High betweenness centrality (0.021) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 2 inferred relationships involving `handleFullRefresh()` (e.g. with `boot()` and `initialize()`) actually correct?",
+      "why": "`handleFullRefresh()` has 2 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `Colors`, `Colors`, `default_title` to the rest of the system?",
+      "why": "34 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `design_system.py` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.06560283687943262 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `manifest.json` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.08695652173913043 - nodes in this community are weakly interconnected."
+    }
+  ]
+}
