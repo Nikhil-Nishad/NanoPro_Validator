@@ -19,13 +19,21 @@ const NanoProTableParser = (function () {
         rowNum: ['#', 'no', 'no.', 's.no', 'sno', 'sr.no', 'sl.no'],
         qty: ['qty', 'quantity'],
         price: ['item_price', 'unit_price', 'price', 'rate'],
-        amount: ['line_amount', 'amount', 'total', 'line_total']
+        amount: ['line_amount', 'amount', 'total', 'line_total'],
+        item_no: ['item_no', 'item_number', 'item_#', 'item#', 'part_no', 'sku', 'item_code']
     };
+
+    const REQUIRED_TABLE_COLUMNS = [
+        { key: 'amount', name: 'Line_Amount' },
+        { key: 'item_no', name: 'Item_No' },
+        { key: 'price', name: 'Item_Price' },
+        { key: 'qty', name: 'Qty' }
+    ];
 
     // All known column names (to skip during validation)
     const SKIP_COLUMNS = [
         '#', 'computations', 'cyl_returned', 'cyl_shipped', 'description',
-        'item_no', 'item_no_2', 'unit_of_measure', 'qty_ordered'
+        'item_no_2', 'unit_of_measure', 'qty_ordered'
     ];
 
     // Fuzzy patterns for OCR tolerance
@@ -50,6 +58,13 @@ const NanoProTableParser = (function () {
             /^amount$/i,
             /^total$/i,
             /^line[_\s]?total$/i
+        ],
+        item_no: [
+            /^item[_\s]?no\.?$/i,
+            /^item[_\s]?#$/i,
+            /^item[_\s]?number$/i,
+            /^part[_\s]?no\.?$/i,
+            /^sku$/i
         ]
     };
 
@@ -382,7 +397,7 @@ const NanoProTableParser = (function () {
         if (tableData.length === 0 || columns.length === 0) return null;
 
         const headerRow = tableData[0];
-        const mapping = { qty: null, price: null, amount: null, rowNum: null };
+        const mapping = { qty: null, price: null, amount: null, item_no: null, rowNum: null };
 
         console.log('[NanoPro TableParser] Header texts:',
             headerRow.cells.map((c, i) => `${i}:"${c?.text || ''}"`).join(', '));
@@ -395,7 +410,7 @@ const NanoProTableParser = (function () {
             const text = cell.text;
 
             // Check each column type
-            for (const columnType of ['rowNum', 'qty', 'price', 'amount']) {
+            for (const columnType of ['rowNum', 'qty', 'price', 'amount', 'item_no']) {
                 if (mapping[columnType] !== null) continue;
 
                 const result = matchesColumnType(text, columnType);
@@ -483,37 +498,38 @@ const NanoProTableParser = (function () {
      * Extract validation rows from parsed table
      */
     function extractValidationRows(tableData, columnMapping) {
-        if (!columnMapping ||
-            columnMapping.qty === null ||
-            columnMapping.price === null ||
-            columnMapping.amount === null) {
-            return {
-                success: false,
-                error: 'Could not identify Qty, Price, Amount columns',
-                mapping: columnMapping
-            };
+        const missingColumns = [];
+        for (const req of REQUIRED_TABLE_COLUMNS) {
+            if (!columnMapping || columnMapping[req.key] === null || columnMapping[req.key] === undefined) {
+                missingColumns.push(req.name);
+            }
         }
 
         // Skip header row
         const dataRows = tableData.slice(1);
 
         const validationRows = dataRows.map((row, index) => {
-            const qtyCell = row.cells[columnMapping.qty];
-            const priceCell = row.cells[columnMapping.price];
-            const amountCell = row.cells[columnMapping.amount];
+            const qtyCell = columnMapping?.qty !== null && columnMapping?.qty !== undefined ? row.cells[columnMapping.qty] : null;
+            const priceCell = columnMapping?.price !== null && columnMapping?.price !== undefined ? row.cells[columnMapping.price] : null;
+            const amountCell = columnMapping?.amount !== null && columnMapping?.amount !== undefined ? row.cells[columnMapping.amount] : null;
+            const itemNoCell = columnMapping?.item_no !== null && columnMapping?.item_no !== undefined ? row.cells[columnMapping.item_no] : null;
 
             // Get row number if available
             let rowNumber = index + 1;
-            if (columnMapping.rowNum !== null) {
+            if (columnMapping?.rowNum !== null && columnMapping?.rowNum !== undefined) {
                 const rowNumCell = row.cells[columnMapping.rowNum];
                 if (rowNumCell?.value) {
                     rowNumber = rowNumCell.value;
                 }
             }
 
+            const rawItemNo = itemNoCell?.text !== undefined && itemNoCell?.text !== null ? itemNoCell.text.trim() : null;
+
             return {
                 index: index,
                 displayRowNum: rowNumber,
+                item_no: rawItemNo,
+                rawItemNo: rawItemNo,
                 qty: qtyCell?.value !== null && qtyCell?.value !== undefined ? {
                     value: qtyCell.value,
                     text: qtyCell.text
@@ -534,19 +550,25 @@ const NanoProTableParser = (function () {
 
         // Filter empty rows
         const nonEmpty = validationRows.filter(row =>
-            row.qty !== null || row.price !== null || row.amount !== null
+            row.qty !== null || row.price !== null || row.amount !== null || row.item_no !== null
         );
 
         console.log(`[NanoPro TableParser] Extracted ${nonEmpty.length} validation rows`);
 
-        return { success: true, rows: nonEmpty };
+        return {
+            success: true,
+            rows: nonEmpty,
+            columnMapping: columnMapping,
+            missingColumns: missingColumns
+        };
     }
 
     // Public API
     return {
         parseTable: parseTable,
         extractValidationRows: extractValidationRows,
-        matchesColumnType: matchesColumnType
+        matchesColumnType: matchesColumnType,
+        REQUIRED_TABLE_COLUMNS: REQUIRED_TABLE_COLUMNS
     };
 
 })();
@@ -554,4 +576,7 @@ const NanoProTableParser = (function () {
 // Export
 if (typeof window !== 'undefined') {
     window.NanoProTableParser = NanoProTableParser;
+}
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = NanoProTableParser;
 }

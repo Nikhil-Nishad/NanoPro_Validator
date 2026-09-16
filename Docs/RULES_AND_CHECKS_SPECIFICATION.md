@@ -116,8 +116,21 @@ Nanonets tables often include visually or textually similar columns that must **
 | **`Line_Amount`** | `line_amount`, `amount`, `total`, `ext_price`, `extended_amount` | `computations`, `unit_of_measure`, `item_no_2` | Prevents mapping to intermediate calculation columns. |
 | **`Item_No`** | `item_no`, `item_number`, `part_no`, `sku` | `item_no_2`, `description`, `unit_of_measure`, `cyl_returned` | **`Item_No_2`** (secondary item number) was previously misidentified as primary `Item_No`. Isolated with exact name matching. |
 
+### 4.2 Mandatory Table Columns (Rule R25)
+Whenever a line items table is present on an invoice page, **all 4 of the following columns are strictly required / necessary**:
+1. **`Line_Amount`** (target column: `amount`)
+2. **`Item_No`** (target column: `item_no`)
+3. **`Item_Price`** (target column: `price`)
+4. **`Qty`** (target column: `qty`)
+
+* **Strict Error Enforcement:** If **ANY** of these 4 columns do not exist in the table, the extension throws an **ERROR** (`reason: 'MISSING_REQUIRED_COLUMN'`).
+* **Badge Representation:** Turns red (INVALID), triggers shake animation, and displays `❌ Missing Line_Amount`, `❌ Missing Item_No`, or `❌ Missing [Columns]`.
+* **Side Panel Alert:** Displays a prominent error banner specifying the exact missing columns and stating: *"The table must always contain all 4 required columns: Line_Amount, Item_No, Item_Price, Qty."*
+* **Multi-Page Page Status:** The page is recorded as `status: 'INVALID'` with `errorSummary: 'Missing [Columns]'` and highlighted with a red card.
+* **Table-less Page Exemption:** Document pages that legitimately contain no table (cover pages, signature sheets, terms and conditions with `hasNoTable: true`) are valid with 0 rows and $\$0.00$ added to the cumulative invoice total, and do not trigger column errors.
+
 ### Header Detection Heuristics
-1. **Direct header cell text matching** (`th`, `[role="columnheader"]`, `.header-cell`).
+1. **Direct header cell text matching** (`th`, `[role="columnheader"]`, `.header-cell`, `MuiAutocomplete-input`).
 2. **Column bounding box alignment** (`getBoundingClientRect()` center X alignment) with data cells.
 3. **Data cell fallback**: detects `[data-field-name]` or input placeholders when header row is virtualized.
 
@@ -237,6 +250,7 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 
 1. **ERROR (Highest Priority — Badge Turns Red with Shake):**
    - Any row calculation mismatch ($|\text{Qty} \times \text{Price} - \text{Amount}| > 0.05$).
+   - Missing any of the 4 required table columns: `Line_Amount`, `Item_No`, `Item_Price`, `Qty` (`MISSING_REQUIRED_COLUMN`).
    - `Environment` $\ne$ `"prod"`.
    - `is_rental` inconsistent (mixed `True` and `False`).
    - `trade_partner_name` blank, invalid, or only label.
@@ -259,6 +273,7 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 
 4. **VERIFIED (Success — Emerald Green Badge):**
    - All line items match formula.
+   - All 4 required columns present in table (`Line_Amount`, `Item_No`, `Item_Price`, `Qty`).
    - All sidebar fields valid (`prod`, consistent rental, valid trade partner, single total).
    - All `Item_No` values pass formatting rules.
    - Cumulative total equals `invoice_amount` on the last page.
@@ -292,6 +307,7 @@ $$\text{ERROR} \succ \text{CAUTION} \succ \text{INCOMPLETE} \succ \text{VERIFIED
 | **R21** | UI | Design System | Zero purple/violet tokens; Slate, Emerald, Coral, Amber | — | — |
 | **R23** | Refresh | Full Reverification | Wipes all cached memory, resets hashes, re-scans live DOM fresh upon badge/panel refresh, toolbar click, or browser refresh | — | Stale memory bypasses prevented |
 | **R24** | Recovery | Sidebar Auto Turn-Off & Re-Edit | Actively watches sidebar for corrections when in error/caution; auto-turns off active recovery when valid; re-watches and re-validates immediately when fields are re-edited | — | Re-engages error recovery automatically if subsequent re-edits introduce errors |
+| **R25** | Table | Mandatory Columns | Table contains all 4 columns: `Line_Amount`, `Item_No`, `Item_Price`, `Qty` | — | Any of the 4 columns do not exist in the table (throws `MISSING_REQUIRED_COLUMN` ERROR) |
 
 ---
 

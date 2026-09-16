@@ -181,6 +181,23 @@ const NanoProPanel = (function () {
         html += this.renderMultiPageStatus(mpData);
       }
 
+      // Missing Required Table Columns error summary
+      const columnErrors = validationResult.columnErrors || [];
+      if (columnErrors.length > 0) {
+        const missingList = (validationResult.missingColumns || []).join(', ');
+        html += `
+          <div class="nanopro-error-summary nanopro-column-error-summary" style="background: #fef2f2; border: 1px solid #fecaca; border-left: 4px solid #ef4444; border-radius: 6px; padding: 10px 12px; margin: 10px 0;">
+            <div style="font-weight: 600; color: #991b1b; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+              <span>❌</span>
+              <span>Missing Required Column(s): <strong>${missingList}</strong></span>
+            </div>
+            <div style="font-size: 11px; color: #b91c1c; margin-top: 4px;">
+              The table must always contain all 4 required columns: <strong>Line_Amount</strong>, <strong>Item_No</strong>, <strong>Item_Price</strong>, <strong>Qty</strong>.
+            </div>
+          </div>
+        `;
+      }
+
       // Item_No caution summary
       const itemNoWarnings = validationResult.itemNoWarnings || [];
       const itemNoErrors = validationResult.itemNoErrors || [];
@@ -564,7 +581,7 @@ const NanoProPanel = (function () {
         let detailText = 'Navigate to scan';
 
         if (pData) {
-          if (pData.status === 'INVALID' || (pData.calcErrors > 0 || pData.itemNoErrors > 0)) {
+          if (pData.status === 'INVALID' || (pData.calcErrors > 0 || pData.itemNoErrors > 0 || pData.columnErrors > 0)) {
             badgeClass = 'nanopro-page-error';
             icon = '❌';
             statusText = pData.errorSummary || 'Error';

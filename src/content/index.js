@@ -53,6 +53,43 @@
         pageInfo: null
     };
 
+    const REQUIRED_TABLE_COLUMNS = [
+        { key: 'amount', name: 'Line_Amount' },
+        { key: 'item_no', name: 'Item_No' },
+        { key: 'price', name: 'Item_Price' },
+        { key: 'qty', name: 'Qty' }
+    ];
+
+    /**
+     * Validate that all 4 required columns (Line_Amount, Item_No, Item_Price, Qty) exist in the table.
+     * If any do not exist, throw/return error.
+     */
+    function validateRequiredTableColumns(columnMapping) {
+        const missingColumns = [];
+        const errors = [];
+
+        for (const req of REQUIRED_TABLE_COLUMNS) {
+            const mapped = columnMapping ? columnMapping[req.key] : null;
+            const exists = mapped !== null && mapped !== undefined;
+
+            if (!exists) {
+                missingColumns.push(req.name);
+                errors.push({
+                    field: req.name,
+                    column: req.name,
+                    reason: 'MISSING_REQUIRED_COLUMN',
+                    message: `Required column "${req.name}" does not exist in the table`
+                });
+            }
+        }
+
+        return {
+            isValid: missingColumns.length === 0,
+            missingColumns: missingColumns,
+            errors: errors
+        };
+    }
+
     /**
      * Check if two URLs belong to the same document instance (including multi-page pages)
      * e.g.
@@ -1145,16 +1182,34 @@
             validationResult.itemNoErrors = [];
         }
 
+        // Check for the 4 required columns (Line_Amount, Item_No, Item_Price, Qty)
+        if (!hasNoTable) {
+            const columnCheck = validateRequiredTableColumns(columnMapping);
+            if (!columnCheck.isValid) {
+                validationResult.missingColumns = columnCheck.missingColumns;
+                validationResult.columnErrors = columnCheck.errors;
+            } else {
+                validationResult.missingColumns = [];
+                validationResult.columnErrors = [];
+            }
+        } else {
+            validationResult.missingColumns = [];
+            validationResult.columnErrors = [];
+        }
+        validationResult.columnMapping = columnMapping;
+
         // Compute error breakdown for this specific page
         const calcErrors = validationResult.summary?.invalid || 0;
         const itemNoErrors = validationResult.itemNoErrors?.length || 0;
+        const columnErrors = validationResult.columnErrors?.length || 0;
         const itemNoWarnings = (validationResult.itemNoWarnings || []).filter(w => w.severity !== 'ERROR').length;
-        const hasErrors = (calcErrors + itemNoErrors) > 0;
+        const hasErrors = (calcErrors + itemNoErrors + columnErrors) > 0;
         const hasCautions = itemNoWarnings > 0;
 
         let errorSummary = hasNoTable ? 'No table (0 items)' : 'Valid';
         if (hasErrors) {
             const errParts = [];
+            if (columnErrors > 0) errParts.push(`Missing ${validationResult.missingColumns.join(', ')}`);
             if (calcErrors > 0) errParts.push(`${calcErrors} calc error${calcErrors > 1 ? 's' : ''}`);
             if (itemNoErrors > 0) errParts.push(`${itemNoErrors} item_no error${itemNoErrors > 1 ? 's' : ''}`);
             errorSummary = errParts.join(', ');
@@ -1190,6 +1245,8 @@
             totalRows: (validationResult.results || []).length,
             calcErrors: calcErrors,
             itemNoErrors: itemNoErrors,
+            columnErrors: columnErrors,
+            missingColumns: validationResult.missingColumns || [],
             itemNoWarnings: itemNoWarnings,
             hasErrors: hasErrors,
             hasCautions: hasCautions,
@@ -2156,16 +2213,35 @@
             // Attach sidebar validation
             const sidebarResult = attachSidebarValidation(validationResult, fields);
 
+            // Check required table columns: Line_Amount, Item_No, Item_Price, Qty
+            const manualColumnMapping = tableResult.columnMapping || validationData.columnMapping;
+            validationResult.columnMapping = manualColumnMapping;
+            const columnCheck = validateRequiredTableColumns(manualColumnMapping);
+            if (!columnCheck.isValid) {
+                validationResult.missingColumns = columnCheck.missingColumns;
+                validationResult.columnErrors = columnCheck.errors;
+            } else {
+                validationResult.missingColumns = [];
+                validationResult.columnErrors = [];
+            }
+
+            // Attach Item_No validation
+            const rawItemNos = (validationData.rows || []).map(r => r.item_no ?? null);
+            const hasItemNoColumn = !!(manualColumnMapping && manualColumnMapping.item_no !== null && manualColumnMapping.item_no !== undefined);
+            attachItemNoValidation(validationResult, rawItemNos, hasItemNoColumn, sidebarResult?.rentalStatus);
+
             // Compute error breakdown for this page
             const calcErrors = validationResult.summary?.invalid || 0;
             const itemNoErrors = validationResult.itemNoErrors?.length || 0;
+            const columnErrors = validationResult.columnErrors?.length || 0;
             const itemNoWarnings = (validationResult.itemNoWarnings || []).filter(w => w.severity !== 'ERROR').length;
-            const hasErrors = (calcErrors + itemNoErrors) > 0;
+            const hasErrors = (calcErrors + itemNoErrors + columnErrors) > 0;
             const hasCautions = itemNoWarnings > 0;
 
             let errorSummary = 'Valid';
             if (hasErrors) {
                 const errParts = [];
+                if (columnErrors > 0) errParts.push(`Missing ${validationResult.missingColumns.join(', ')}`);
                 if (calcErrors > 0) errParts.push(`${calcErrors} calc error${calcErrors > 1 ? 's' : ''}`);
                 if (itemNoErrors > 0) errParts.push(`${itemNoErrors} item_no error${itemNoErrors > 1 ? 's' : ''}`);
                 errorSummary = errParts.join(', ');
@@ -2199,6 +2275,8 @@
                 totalRows: validationResult.results.length,
                 calcErrors: calcErrors,
                 itemNoErrors: itemNoErrors,
+                columnErrors: columnErrors,
+                missingColumns: validationResult.missingColumns || [],
                 itemNoWarnings: itemNoWarnings,
                 hasErrors: hasErrors,
                 hasCautions: hasCautions,
@@ -2502,6 +2580,7 @@
         const { summary } = result;
         const sidebarErrors = result.sidebarValidation?.errors || [];
         const itemNoErrors = result.itemNoErrors || [];
+        const columnErrors = result.columnErrors || [];
         const itemNoWarnings = (result.itemNoWarnings || []).filter(w => w.severity !== 'ERROR');
 
         const mpErrors = result.multiPageErrors || result.totalValidation;
@@ -2516,8 +2595,8 @@
         const hasTotalPagesMissing = result.totalValidation && result.totalValidation.status === 'PAGES_MISSING';
         const isMultiPagePending = result.totalValidation && result.totalValidation.status === 'MULTI_PAGE_PENDING';
 
-        // Errors: current page errors (calculation mismatches, sidebar failures, item_no errors, multiple totals) + errors on other scanned pages
-        const currentPageErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + (hasTotalMultiple ? 1 : 0);
+        // Errors: current page errors (calculation mismatches, sidebar failures, item_no errors, missing columns, multiple totals) + errors on other scanned pages
+        const currentPageErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + columnErrors.length + (hasTotalMultiple ? 1 : 0);
         const totalErrorCount = currentPageErrorCount + (isMulti ? otherPagesWithErrors.length : 0);
 
         // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing, or missing earlier pages
@@ -2544,6 +2623,13 @@
                     textEl.textContent = `❌ ${pagesStr} ${errLabel}`;
                 } else {
                     const errorReasons = [];
+                    if (columnErrors.length > 0) {
+                        if (result.missingColumns && result.missingColumns.length > 0) {
+                            errorReasons.push(`Missing ${result.missingColumns.join(', ')}`);
+                        } else {
+                            errorReasons.push(`Missing Column`);
+                        }
+                    }
                     if (summary?.invalid > 0) errorReasons.push(`${summary.invalid} Calc Error${summary.invalid > 1 ? 's' : ''}`);
                     if (sidebarErrors.length > 0) errorReasons.push(`${sidebarErrors[0].field} Error`);
                     if (itemNoErrors.length > 0) errorReasons.push(`Item_No Error`);

@@ -61,6 +61,10 @@
 11. **Multi-Page Table-less Page Isolation & Cumulative Totals**:
    - Cleanly isolates table-less pages (e.g. summary/signature/terms pages) as $0.00 (0 items) without stale row bleeding or error copying from adjacent pages.
    - Correctly matches the cumulative line item total across all pages against the last-page `invoice_amount`.
+12. **Mandatory Table Columns Enforcement (`Line_Amount`, `Item_No`, `Item_Price`, `Qty`)**:
+   - Four columns are strictly required and necessary in the table: `Line_Amount`, `Item_No`, `Item_Price`, and `Qty`.
+   - If **ANY** of them do not exist in the table, the extension throws an **ERROR** (`reason: 'MISSING_REQUIRED_COLUMN'`), turns the badge red (INVALID) with shake animation, displays `❌ Missing Line_Amount`, `❌ Missing Item_No`, or `❌ Missing [Columns]`, presents a high-visibility alert banner in the side panel, and records the page as `status: 'INVALID'`.
+   - Table-less pages (cover sheets, receipts with `hasNoTable: true`) are legitimately recognized with 0 rows and do not throw column errors.
 
 ---
 
@@ -83,7 +87,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 31 validation test suites)
+# Run the automated test suite (all 33 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

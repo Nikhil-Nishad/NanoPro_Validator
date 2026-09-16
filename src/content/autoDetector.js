@@ -28,11 +28,18 @@ const NanoProAutoDetector = (function () {
     // Explicitly excluded table headers that must never be matched as calculation columns
     const EXCLUDED_HEADERS = /^(cyl_returned|cyl_shipped|computations|unit_of_measure|description|item_no_2|qty_ordered)$/i;
 
+    const REQUIRED_TABLE_COLUMNS = [
+        { key: 'amount', name: 'Line_Amount' },
+        { key: 'item_no', name: 'Item_No' },
+        { key: 'price', name: 'Item_Price' },
+        { key: 'qty', name: 'Qty' }
+    ];
+
     const HEADER_PATTERNS = {
         qty: /^(qty|quantity|units|count)$/i,
         price: /^(item_price|unit_price|price|rate|unit_cost)$/i,
         amount: /^(line_amount|amount|total|line_total|net_amount|item_amount)$/i,
-        item_no: /^(item_no|item_number|part_no|sku)$/i,
+        item_no: /^(item_no|item_number|item_#|item#|item_num|part_no|sku|item_code)$/i,
     };
 
     const DATA_INPUT_SELECTOR = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])';
@@ -92,22 +99,49 @@ const NanoProAutoDetector = (function () {
         return buildResult(container, headers);
     }
 
+    function checkRequiredColumns(columnMapping) {
+        const missing = [];
+        const errors = [];
+        for (const col of REQUIRED_TABLE_COLUMNS) {
+            const exists = columnMapping && columnMapping[col.key] !== null && columnMapping[col.key] !== undefined;
+            if (!exists) {
+                missing.push(col.name);
+                errors.push({
+                    field: col.name,
+                    column: col.name,
+                    reason: 'MISSING_REQUIRED_COLUMN',
+                    message: `Required column "${col.name}" does not exist in the table`
+                });
+            }
+        }
+        return {
+            isValid: missing.length === 0,
+            missingColumns: missing,
+            errors: errors
+        };
+    }
+
     function buildResult(scope, headers) {
         const columnMapping = mapHeaders(headers);
         const foundCols = Object.entries(columnMapping).filter(([k, v]) => v);
+        const columnCheck = checkRequiredColumns(columnMapping);
 
-        if (foundCols.length < 2) {
-            console.log('[NanoPro AutoDetector] Not enough validation columns mapped:',
-                headers.map(h => h.name), '→ mapped:', foundCols.map(([k]) => k));
+        // If no validation columns mapped, only accept if container headers exist inside a table container
+        if (foundCols.length === 0 && (scope === document.body || headers.length < 2)) {
+            console.log('[NanoPro AutoDetector] No validation columns mapped and insufficient container headers:',
+                headers.map(h => h.name));
             return null;
         }
 
         console.log('[NanoPro AutoDetector] Column mapping:', Object.fromEntries(
             Object.entries(columnMapping).map(([k, v]) => [k, v ? v.name : null])
         ));
+        if (!columnCheck.isValid) {
+            console.warn('[NanoPro AutoDetector] ❌ Missing required column(s):', columnCheck.missingColumns.join(', '));
+        }
 
         const rows = extractRows(scope, headers, columnMapping);
-        if (rows.length === 0) {
+        if (rows.length === 0 && columnCheck.isValid) {
             console.log('[NanoPro AutoDetector] No data rows extracted');
             return null;
         }
@@ -117,6 +151,8 @@ const NanoProAutoDetector = (function () {
             success: true,
             rows: rows,
             columnMapping: columnMapping,
+            missingColumns: columnCheck.missingColumns,
+            columnErrors: columnCheck.errors,
             headerCount: headers.length,
             rowCount: rows.length,
             method: 'dom-detection'
@@ -265,7 +301,7 @@ const NanoProAutoDetector = (function () {
             if (!mapping.qty && norm === 'qty') mapping.qty = header;
             if (!mapping.price && norm === 'item_price') mapping.price = header;
             if (!mapping.amount && norm === 'line_amount') mapping.amount = header;
-            if (!mapping.item_no && norm === 'item_no') mapping.item_no = header;
+            if (!mapping.item_no && (norm === 'item_no' || norm === 'item_#' || norm === 'item#')) mapping.item_no = header;
         }
 
         // Pass 2: Secondary patterns if primary not matched, strictly excluding non-target columns
@@ -375,9 +411,9 @@ const NanoProAutoDetector = (function () {
                     }
                 }
 
-                // If row has any data or is identified, retain it
+                // If row has any data or inputs are identified, retain it
                 const hasAnyData = row.qty !== null || row.price !== null || row.amount !== null || row.item_no !== null;
-                if (hasAnyData) {
+                if (hasAnyData || inputs.length > 0) {
                     console.log(`[NanoPro AutoDetector] Row ${i + 1} (rbd):`, row);
                     rows.push(row);
                 }
@@ -453,7 +489,7 @@ const NanoProAutoDetector = (function () {
             }
 
             const hasAnyData = row.qty !== null || row.price !== null || row.amount !== null || row.item_no !== null;
-            if (hasAnyData && (row.qty || row.price || row.amount || row.item_no)) {
+            if (hasAnyData || cluster.items.length > 0) {
                 console.log(`[NanoPro AutoDetector] Row ${i + 1} (cluster):`, row);
                 rows.push(row);
             }
@@ -1398,6 +1434,8 @@ const NanoProAutoDetector = (function () {
         findSidebarFields: findSidebarFields,
         isSameDocumentInstance: isSameDocumentInstance,
         isTableVisible: isTableVisible,
+        checkRequiredColumns: checkRequiredColumns,
+        REQUIRED_TABLE_COLUMNS: REQUIRED_TABLE_COLUMNS,
         PRIMARY_SELECTOR: PRIMARY_SELECTOR
     };
 })();

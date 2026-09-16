@@ -3270,6 +3270,220 @@ function testPage1TablePreservationOnNavigation() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 33: Required Table Columns Validation (Line_Amount, Item_No, Item_Price, Qty)
+// ============================================================
+function testRequiredTableColumnsValidation() {
+    console.log('Test 33: Required Table Columns Validation (Line_Amount, Item_No, Item_Price, Qty)');
+
+    const REQUIRED_TABLE_COLUMNS = [
+        { key: 'amount', name: 'Line_Amount' },
+        { key: 'item_no', name: 'Item_No' },
+        { key: 'price', name: 'Item_Price' },
+        { key: 'qty', name: 'Qty' }
+    ];
+
+    function validateRequiredTableColumns(columnMapping) {
+        const missingColumns = [];
+        const errors = [];
+
+        for (const req of REQUIRED_TABLE_COLUMNS) {
+            const mapped = columnMapping ? columnMapping[req.key] : null;
+            const exists = mapped !== null && mapped !== undefined;
+
+            if (!exists) {
+                missingColumns.push(req.name);
+                errors.push({
+                    field: req.name,
+                    column: req.name,
+                    reason: 'MISSING_REQUIRED_COLUMN',
+                    message: `Required column "${req.name}" does not exist in the table`
+                });
+            }
+        }
+
+        return {
+            isValid: missingColumns.length === 0,
+            missingColumns: missingColumns,
+            errors: errors
+        };
+    }
+
+    // Helper to evaluate full page error state given rows, columnMapping, and hasNoTable
+    function evaluateTablePage(rows, columnMapping, hasNoTable = false) {
+        let validationResult = {
+            success: true,
+            results: rows.map((r, i) => ({
+                rowNumber: i + 1,
+                qty: r.qty,
+                price: r.price,
+                actual: r.amount,
+                status: 'VALID'
+            })),
+            summary: { total: rows.length, valid: rows.length, invalid: 0, incomplete: 0 },
+            hasNoTable: hasNoTable,
+            columnErrors: [],
+            missingColumns: []
+        };
+
+        if (!hasNoTable) {
+            const check = validateRequiredTableColumns(columnMapping);
+            if (!check.isValid) {
+                validationResult.missingColumns = check.missingColumns;
+                validationResult.columnErrors = check.errors;
+            }
+        }
+
+        const calcErrors = validationResult.summary.invalid || 0;
+        const columnErrors = validationResult.columnErrors.length;
+        const hasErrors = (calcErrors + columnErrors) > 0;
+
+        let errorSummary = hasNoTable ? 'No table (0 items)' : 'Valid';
+        if (hasErrors) {
+            const errParts = [];
+            if (columnErrors > 0) errParts.push(`Missing ${validationResult.missingColumns.join(', ')}`);
+            if (calcErrors > 0) errParts.push(`${calcErrors} calc error${calcErrors > 1 ? 's' : ''}`);
+            errorSummary = errParts.join(', ');
+        }
+
+        const pageData = {
+            pageNumber: 1,
+            sumAmount: rows.reduce((s, r) => s + (r.amount || 0), 0),
+            rowCount: rows.length,
+            totalRows: rows.length,
+            calcErrors: calcErrors,
+            columnErrors: columnErrors,
+            missingColumns: validationResult.missingColumns,
+            hasErrors: hasErrors,
+            errorSummary: errorSummary,
+            hasNoTable: hasNoTable,
+            status: hasErrors ? 'INVALID' : 'VALID'
+        };
+
+        // Badge representation
+        const badgeReasons = [];
+        if (columnErrors > 0) badgeReasons.push(`Missing ${validationResult.missingColumns.join(', ')}`);
+        const badgeText = hasErrors ? `❌ ${badgeReasons.join(' | ')}` : `✅ Valid`;
+
+        return { validationResult, pageData, badgeText, status: pageData.status };
+    }
+
+    // Case 1: All 4 columns present -> Valid
+    const fullTableCols = {
+        amount: { name: 'Line_Amount' },
+        item_no: { name: 'Item_No' },
+        price: { name: 'Item_Price' },
+        qty: { name: 'Qty' }
+    };
+    const sampleRows = [
+        { qty: 2, price: 10, amount: 20, item_no: 'ITEM123' },
+        { qty: 1, price: 15, amount: 15, item_no: 'ITEM456' }
+    ];
+    const res1 = evaluateTablePage(sampleRows, fullTableCols, false);
+    assert.strictEqual(res1.status, 'VALID', 'Table with all 4 required columns must be VALID');
+    assert.strictEqual(res1.validationResult.columnErrors.length, 0);
+    assert.strictEqual(res1.validationResult.missingColumns.length, 0);
+
+    // Case 2: Item_No column missing -> Throws error
+    const missingItemNoCols = {
+        amount: { name: 'Line_Amount' },
+        item_no: null,
+        price: { name: 'Item_Price' },
+        qty: { name: 'Qty' }
+    };
+    const res2 = evaluateTablePage(sampleRows, missingItemNoCols, false);
+    assert.strictEqual(res2.status, 'INVALID', 'Missing Item_No column must cause page status INVALID');
+    assert.strictEqual(res2.validationResult.columnErrors.length, 1);
+    assert.deepStrictEqual(res2.validationResult.missingColumns, ['Item_No']);
+    assert.strictEqual(res2.pageData.errorSummary, 'Missing Item_No');
+    assert.strictEqual(res2.badgeText, '❌ Missing Item_No');
+
+    // Case 3: Line_Amount column missing -> Throws error
+    const missingAmountCols = {
+        amount: null,
+        item_no: { name: 'Item_No' },
+        price: { name: 'Item_Price' },
+        qty: { name: 'Qty' }
+    };
+    const res3 = evaluateTablePage(sampleRows, missingAmountCols, false);
+    assert.strictEqual(res3.status, 'INVALID', 'Missing Line_Amount column must cause page status INVALID');
+    assert.strictEqual(res3.validationResult.columnErrors.length, 1);
+    assert.deepStrictEqual(res3.validationResult.missingColumns, ['Line_Amount']);
+    assert.strictEqual(res3.pageData.errorSummary, 'Missing Line_Amount');
+    assert.strictEqual(res3.badgeText, '❌ Missing Line_Amount');
+
+    // Case 4: Item_Price column missing -> Throws error
+    const missingPriceCols = {
+        amount: { name: 'Line_Amount' },
+        item_no: { name: 'Item_No' },
+        price: null,
+        qty: { name: 'Qty' }
+    };
+    const res4 = evaluateTablePage(sampleRows, missingPriceCols, false);
+    assert.strictEqual(res4.status, 'INVALID', 'Missing Item_Price column must cause page status INVALID');
+    assert.strictEqual(res4.validationResult.columnErrors.length, 1);
+    assert.deepStrictEqual(res4.validationResult.missingColumns, ['Item_Price']);
+    assert.strictEqual(res4.pageData.errorSummary, 'Missing Item_Price');
+
+    // Case 5: Qty column missing -> Throws error
+    const missingQtyCols = {
+        amount: { name: 'Line_Amount' },
+        item_no: { name: 'Item_No' },
+        price: { name: 'Item_Price' },
+        qty: null
+    };
+    const res5 = evaluateTablePage(sampleRows, missingQtyCols, false);
+    assert.strictEqual(res5.status, 'INVALID', 'Missing Qty column must cause page status INVALID');
+    assert.strictEqual(res5.validationResult.columnErrors.length, 1);
+    assert.deepStrictEqual(res5.validationResult.missingColumns, ['Qty']);
+    assert.strictEqual(res5.pageData.errorSummary, 'Missing Qty');
+
+    // Case 6: Multiple columns missing (e.g. Line_Amount & Item_No) -> Throws error with all missing
+    const missingMultipleCols = {
+        amount: null,
+        item_no: null,
+        price: { name: 'Item_Price' },
+        qty: { name: 'Qty' }
+    };
+    const res6 = evaluateTablePage(sampleRows, missingMultipleCols, false);
+    assert.strictEqual(res6.status, 'INVALID');
+    assert.strictEqual(res6.validationResult.columnErrors.length, 2);
+    assert.deepStrictEqual(res6.validationResult.missingColumns, ['Line_Amount', 'Item_No']);
+    assert.strictEqual(res6.pageData.errorSummary, 'Missing Line_Amount, Item_No');
+    assert.strictEqual(res6.badgeText, '❌ Missing Line_Amount, Item_No');
+
+    // Case 7: All 4 columns missing -> Throws error listing all 4
+    const res7 = evaluateTablePage(sampleRows, {}, false);
+    assert.strictEqual(res7.status, 'INVALID');
+    assert.strictEqual(res7.validationResult.columnErrors.length, 4);
+    assert.deepStrictEqual(res7.validationResult.missingColumns, ['Line_Amount', 'Item_No', 'Item_Price', 'Qty']);
+
+    // Case 8: Table-less page (cover page/receipt) -> Excluded from table column check, remains VALID
+    const res8 = evaluateTablePage([], {}, true /* hasNoTable */);
+    assert.strictEqual(res8.status, 'VALID', 'Table-less page must remain VALID and not throw column errors');
+    assert.strictEqual(res8.validationResult.columnErrors.length, 0);
+    assert.strictEqual(res8.validationResult.missingColumns.length, 0);
+    assert.strictEqual(res8.pageData.errorSummary, 'No table (0 items)');
+
+    // Case 9: Verify AutoDetector and TableParser export REQUIRED_TABLE_COLUMNS and recognize all 4 headers
+    const AutoDetector = require('../src/content/autoDetector.js');
+    assert.ok(AutoDetector.REQUIRED_TABLE_COLUMNS, 'AutoDetector must export REQUIRED_TABLE_COLUMNS');
+    assert.strictEqual(AutoDetector.REQUIRED_TABLE_COLUMNS.length, 4);
+
+    const TableParser = require('../src/content/tableParser.js');
+    assert.ok(TableParser.REQUIRED_TABLE_COLUMNS, 'TableParser must export REQUIRED_TABLE_COLUMNS');
+    assert.strictEqual(TableParser.REQUIRED_TABLE_COLUMNS.length, 4);
+
+    // Case 10: Verify tableParser matchesColumnType matches item_no and other columns
+    assert.strictEqual(TableParser.matchesColumnType('Item_No', 'item_no').match, true);
+    assert.strictEqual(TableParser.matchesColumnType('item_#', 'item_no').match, true);
+    assert.strictEqual(TableParser.matchesColumnType('Line_Amount', 'amount').match, true);
+    assert.strictEqual(TableParser.matchesColumnType('Item_Price', 'price').match, true);
+    assert.strictEqual(TableParser.matchesColumnType('Qty', 'qty').match, true);
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -3294,8 +3508,9 @@ testResilientMultiPageDetectionAndDynamicDiscovery();
 testTradePartnerMultiPageVsSinglePage();
 testTablelessPageAccumulationAndStateIsolation();
 testPage1TablePreservationOnNavigation();
+testRequiredTableColumnsValidation();
 
-console.log('--- ALL 32 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 33 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 
