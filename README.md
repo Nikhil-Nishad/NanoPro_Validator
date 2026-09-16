@@ -58,9 +58,11 @@
 10. **Multi-Strategy Resilient Environment Extraction**:
    - Multi-strategy detection guarantees `Environment` extraction across dedicated inputs (`input[name*="environment"]`), `data-testid` elements with adjacent sibling value boxes, and label scans across all element types with punctuation stripping (colons, asterisks).
    - Prevents label collisions and eliminates false Environment error locks.
-11. **Multi-Page Table-less Page Isolation & Cumulative Totals**:
-   - Cleanly isolates table-less pages (e.g. summary/signature/terms pages) as $0.00 (0 items) without stale row bleeding or error copying from adjacent pages.
-   - Correctly matches the cumulative line item total across all pages against the last-page `invoice_amount`.
+11. **Multi-Page Table-less Page Isolation & Dynamic Re-detection**:
+   - In multi-page documents, `invoice_amount` is kept pending until found across all pages without false caution/error badges or premature placement errors.
+   - Cleanly isolates table-less pages (e.g. Page 1 without table, Page 2 with table) as $0.00 (0 items) without stale row bleeding, row duplication, or leakage between pages.
+   - On page flips, the extension instantly purges target page caches, shows a live loading placeholder in the open panel, and re-queries the live DOM for that specific page.
+   - Correctly matches cumulative line item totals (e.g. Page 1 $0.00 + Page 2 $150.66 + Page 3 $29.14 = $179.80) against `invoice_amount`.
 12. **Mandatory Table Columns Enforcement (`Line_Amount`, `Item_No`, `Item_Price`, `Qty`)**:
    - Four columns are strictly required and necessary in the table: `Line_Amount`, `Item_No`, `Item_Price`, and `Qty`.
    - If **ANY** of them do not exist in the table, the extension throws an **ERROR** (`reason: 'MISSING_REQUIRED_COLUMN'`), turns the badge red (INVALID) with shake animation, displays `❌ Missing Line_Amount`, `❌ Missing Item_No`, or `❌ Missing [Columns]`, presents a high-visibility alert banner in the side panel, and records the page as `status: 'INVALID'`.
@@ -87,7 +89,7 @@ To verify that all JavaScript source files and test suites pass with zero syntax
 # Verify JavaScript syntax across all modules
 node -c src/background.js src/content/*.js src/ui/*.js
 
-# Run the automated test suite (all 33 validation test suites)
+# Run the automated test suite (all 34 validation test suites)
 node tests/sidebar_validation_test.js
 ```
 

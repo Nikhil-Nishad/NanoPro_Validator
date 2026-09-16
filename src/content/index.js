@@ -302,7 +302,11 @@
         let effectivePage = livePage;
         if (!effectivePage || effectivePage.source === 'default-single-page') {
             if (sidebarMemory.pageInfo && sidebarMemory.pageInfo.source !== 'default-single-page') {
-                effectivePage = sidebarMemory.pageInfo;
+                // If multi-page, adopt totalPages from memory, but NEVER clobber live currentPage!
+                effectivePage = {
+                    ...sidebarMemory.pageInfo,
+                    currentPage: livePage?.currentPage || sidebarMemory.pageInfo.currentPage
+                };
             }
         }
         if (!effectivePage) {
@@ -1003,12 +1007,10 @@
                     const existingPageData = multiPageStore.pages?.[pageNum];
                     const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
 
-                    // If this page ALREADY has a confirmed table with rows, NEVER turn it into a table-less page
-                    // due to momentary unmounting during page flips, navigation, or scrolling debounce!
-                    if (isDocPage && !hadExistingTable) {
+                    if (isDocPage) {
                         const maxTableWait = 1;
-                        if (retryCount < maxTableWait && !isBackgroundPoll) {
-                            console.log(`[NanoPro v3] Table not found yet on Page ${pageNum}, checking once more in 150ms...`);
+                        if (!force && hadExistingTable && retryCount < maxTableWait && !isBackgroundPoll) {
+                            console.log(`[NanoPro v4] Table momentarily absent on Page ${pageNum}, checking once more in 150ms...`);
                             autoDetectTimer = setTimeout(
                                 () => runAutoDetection(retryCount + 1, false, force, maxTableWait),
                                 150
@@ -1016,12 +1018,12 @@
                             return;
                         }
 
-                        // Table did not appear after settling — legitimately a table-less document page!
+                        // Table did not appear after settling or forced recheck — legitimately a table-less document page!
                         const currentTablelessHash = 'tableless|P' + pageNum + '|' + (pageFields.invoiceNumber?.raw || '') + '|' + (pageFields.tradePartnerName?.raw || '');
                         if (currentTablelessHash === lastDetectedStateHash && !force && validationResult && validationResult.hasNoTable) {
                             return;
                         }
-                        console.log(`[NanoPro v3] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
+                        console.log(`[NanoPro v4] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
                         lastDetectedStateHash = currentTablelessHash;
                         processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
                         return;
@@ -1039,10 +1041,10 @@
                 }
 
                 // CRITICAL: If we already have a valid validationResult,
-                // NEVER wipe the badge to "No Data Found" due to temporary detection misses or DOM debounce!
-                if (validationResult && validationResult.summary && validationResult.summary.total >= 0 && validationResult.success) {
+                // NEVER wipe the badge to "No Data Found" due to temporary detection misses or DOM debounce (unless force rechecking)!
+                if (validationResult && validationResult.summary && validationResult.summary.total >= 0 && validationResult.success && !force) {
                     const currentP = getEffectiveSidebarFields().pageInfo?.currentPage || 1;
-                    if (!validationResult.validatedPage || validationResult.validatedPage === currentP) {
+                    if (!validationResult.validatedPage || (validationResult.validatedPage === currentP && !validationResult.hasNoTable)) {
                         console.log('[NanoPro v3] Preserving existing valid state despite temporary detection miss');
                         updateUI(validationResult);
                         return;
@@ -1428,65 +1430,13 @@
             }
 
             // --- MULTI PAGE DOCUMENT ---
-            // If we are NOT on the last page:
-            if (!isLastPage) {
-                const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount;
-                // If all pages have been recorded AND we have an invoice amount (e.g. from previous visit to last page):
-                if (hasAllPages && effectiveInv && effectiveInv.value !== null) {
-                    const diff = NanoProParser.round(Math.abs(cumulativeSum - effectiveInv.value), 2);
-                    const tolerance = 0.10;
-                    const isMatch = diff <= tolerance;
-                    result.totalValidation = {
-                        isMultiPage: true,
-                        currentPage: currentPage,
-                        totalPages: totalPages,
-                        pageSum: pageSum,
-                        sumAmount: cumulativeSum,
-                        summedRows: totalSummedRows,
-                        recordedPages: recordedPages,
-                        missingPages: [],
-                        pageBreakdown: pageBreakdown,
-                        pagesWithErrors: pagesWithErrors,
-                        pagesWithCautions: pagesWithCautions,
-                        pageStatusList: pageStatusList,
-                        invoiceAmount: effectiveInv.value,
-                        invoiceAmountRaw: effectiveInv.raw,
-                        isRemembered: true,
-                        difference: diff,
-                        tolerance: tolerance,
-                        status: isMatch ? 'MATCH' : 'MISMATCH',
-                        selector: effectiveInv.selector,
-                        message: isMatch
-                            ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Matches invoice_amount on Page ${totalPages}.`
-                            : `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Mismatches invoice_amount ($${effectiveInv.value.toFixed(2)}) on Page ${totalPages}.`
-                    };
-                    return;
-                }
-
-                // Earlier page still pending other pages or final invoice amount
-                result.totalValidation = {
-                    isMultiPage: true,
-                    currentPage: currentPage,
-                    totalPages: totalPages,
-                    pageSum: pageSum,
-                    sumAmount: cumulativeSum,
-                    summedRows: totalSummedRows,
-                    recordedPages: recordedPages,
-                    missingPages: missingPages,
-                    pageBreakdown: pageBreakdown,
-                    pagesWithErrors: pagesWithErrors,
-                    pagesWithCautions: pagesWithCautions,
-                    pageStatusList: pageStatusList,
-                    invoiceAmount: effectiveInv?.value || null,
-                    status: 'MULTI_PAGE_PENDING',
-                    message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. Navigate to page ${totalPages} for final invoice total.`
-                };
-                console.log(`[NanoPro] MultiPage: Page ${currentPage}/${totalPages} recorded (Sum: ${pageSum}, Cumulative: ${cumulativeSum}). Pending page ${totalPages}.`);
-                return;
+            const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount || sidebarMemory.invoiceAmount;
+            if (effectiveInv && effectiveInv.value !== null) {
+                multiPageStore.lastInvoiceAmount = effectiveInv;
+                sidebarMemory.invoiceAmount = effectiveInv;
             }
 
-            // We ARE on the last page!
-            const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount;
+            // Rule 1: In multi-page files, keep invoice_amount pending until it is found!
             if (!effectiveInv || effectiveInv.value === null) {
                 result.totalValidation = {
                     isMultiPage: true,
@@ -1502,17 +1452,17 @@
                     pagesWithCautions: pagesWithCautions,
                     pageStatusList: pageStatusList,
                     invoiceAmount: null,
-                    status: 'NOT_FOUND',
+                    status: 'MULTI_PAGE_PENDING',
                     message: hasAllPages
-                        ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Scroll sidebar to reveal invoice_amount for final verification.`
-                        : `invoice_amount not found on last page (Page ${totalPages})`
+                        ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). invoice_amount pending until found in sidebar.`
+                        : `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. invoice_amount pending until found.`
                 };
-                console.log(`[NanoPro] MultiPage: Cumulative Sum=${cumulativeSum} | invoice_amount not found on last page`);
+                console.log(`[NanoPro v4] MultiPage: Page ${currentPage}/${totalPages} recorded (Sum: ${pageSum}, Cumulative: ${cumulativeSum}). invoice_amount pending.`);
                 return;
             }
 
+            // If invoice_amount IS found, but not all pages have been visited yet:
             if (!hasAllPages) {
-                // On last page, but skipped earlier pages
                 result.totalValidation = {
                     isMultiPage: true,
                     currentPage: currentPage,
@@ -1528,14 +1478,15 @@
                     pageStatusList: pageStatusList,
                     invoiceAmount: effectiveInv.value,
                     invoiceAmountRaw: effectiveInv.raw,
-                    status: 'PAGES_MISSING',
-                    message: `Missing earlier pages: [${missingPages.join(', ')}] of ${totalPages}. Please visit all pages to accumulate all line items.`
+                    isRemembered: !!effectiveInv.isRemembered,
+                    status: 'MULTI_PAGE_PENDING',
+                    message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. invoice_amount: $${effectiveInv.value.toFixed(2)}. Visit all pages for final match.`
                 };
-                console.warn(`[NanoPro] MultiPage: Missing pages [${missingPages.join(', ')}] of ${totalPages}`);
+                console.log(`[NanoPro v4] MultiPage: Pages [${missingPages.join(', ')}] pending. invoice_amount=${effectiveInv.value}.`);
                 return;
             }
 
-            // All pages recorded & invoice_amount present on last page! Compare cumulative sum to invoice_amount
+            // All pages recorded AND invoice_amount present! Compare cumulative sum to invoice_amount
             const diff = NanoProParser.round(Math.abs(cumulativeSum - effectiveInv.value), 2);
             const tolerance = 0.10;
             const isMatch = diff <= tolerance;
@@ -1561,11 +1512,11 @@
                 status: isMatch ? 'MATCH' : 'MISMATCH',
                 selector: effectiveInv.selector,
                 message: isMatch
-                    ? `All ${totalPages} pages match invoice_amount ($${effectiveInv.value.toFixed(2)})`
-                    : `Multi-page cumulative sum ($${cumulativeSum.toFixed(2)}) does not match invoice_amount ($${effectiveInv.value.toFixed(2)})`
+                    ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Matches invoice_amount ($${effectiveInv.value.toFixed(2)}).`
+                    : `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Mismatches invoice_amount ($${effectiveInv.value.toFixed(2)}). Diff: $${diff.toFixed(2)}.`
             };
-
-            console.log(`[NanoPro] MultiPage Total (${totalPages} pages): Cumulative Sum=${cumulativeSum} | Invoice=${effectiveInv.value} | Diff=${diff} | ${isMatch ? '✅ Match' : '❌ Mismatch'}`);
+            console.log(`[NanoPro v4] MultiPage: All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}) vs invoice_amount ($${effectiveInv.value.toFixed(2)}) -> ${isMatch ? '✅ MATCH' : '❌ MISMATCH'}`);
+            return;
 
         } catch (e) {
             console.warn('[NanoPro] Total validation error:', e.message);
@@ -1734,12 +1685,11 @@
                 errors.push({ field: 'invoice_amount', message: invoiceAmountMultiplicity.message });
             }
 
-            // Single multi-page invoice rule: invoice_amount must only be on the last page!
+            // Multi-page rule: In multi-page files, keep invoice_amount pending until found, without throwing placement errors
             const liveInvoiceAmount = NanoProAutoDetector.findInvoiceAmount();
-            if (totPages > 1 && curPage < totPages && liveInvoiceAmount) {
-                const placementMsg = `invoice_amount is present on Page ${curPage}, but should only be on the last page (Page ${totPages})`;
-                errors.push({ field: 'invoice_amount', message: placementMsg });
-                console.warn(`[NanoPro] Sidebar error: ${placementMsg}`);
+            if (liveInvoiceAmount && liveInvoiceAmount.value !== null) {
+                sidebarMemory.invoiceAmount = liveInvoiceAmount;
+                multiPageStore.lastInvoiceAmount = liveInvoiceAmount;
             }
 
             const sidebarValidation = {
@@ -2064,6 +2014,12 @@
             invoiceNumber: null,
             pageInfo: null
         };
+        // Also purge cached rows for the active page so refresh re-queries the live DOM
+        const livePInfo = NanoProAutoDetector.detectPageInfo ? NanoProAutoDetector.detectPageInfo() : null;
+        const currentPNum = livePInfo?.currentPage || 1;
+        if (multiPageStore.pages && multiPageStore.pages[currentPNum]) {
+            delete multiPageStore.pages[currentPNum];
+        }
         lastDetectedStateHash = null;
         validationResult = null;
 
@@ -2421,15 +2377,26 @@
      * Handle page flip within the same document (page navigation)
      */
     function handlePageFlip(newPageInfo) {
-        console.log(`[NanoPro v3] Handling page flip to Page ${newPageInfo.currentPage}...`);
+        const newPageNum = newPageInfo.currentPage;
+        console.log(`[NanoPro v4] Handling page flip to Page ${newPageNum}...`);
         sidebarMemory.pageInfo = newPageInfo;
         lastDetectedStateHash = null;
         validationResult = null;
+
+        // Clear cached rows for target page so stale data from earlier pages never leaks
+        if (multiPageStore.pages && multiPageStore.pages[newPageNum]) {
+            delete multiPageStore.pages[newPageNum];
+        }
+
         NanoProBadge.setLoading();
+        if (typeof NanoProPanel !== 'undefined' && NanoProPanel.isOpen && NanoProPanel.isOpen()) {
+            NanoProPanel.showLoading?.(newPageNum);
+        }
+
         if (currentMode === 'auto') {
             clearAutoDetect();
-            // Fast execution: 250ms delay to allow DOM transition to settle, max 3 retries
-            autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 3), 250);
+            // Fast execution: 150ms delay to allow DOM transition to settle, max 2 retries
+            autoDetectTimer = setTimeout(() => runAutoDetection(0, false, true /* force */, 2), 150);
             startTablePolling();
         }
     }

@@ -1247,8 +1247,8 @@ const NanoProAutoDetector = (function () {
                     let activePageNum = null;
 
                     items.forEach((item, idx) => {
-                        const isSelected = item.matches('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i]') ||
-                                           !!item.querySelector('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i]');
+                        const isSelected = item.matches('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i], [class*="border-primary" i], [class*="border-indigo" i], [class*="bg-blue" i], [class*="bg-indigo" i], [aria-current="page"], [data-state="active"], [data-active="true"]') ||
+                                           !!item.querySelector('[aria-selected="true"], [data-selected="true"], [class*="selected" i], [class*="active" i], [class*="border-blue" i], [class*="ring-blue" i], [class*="border-primary" i], [class*="border-indigo" i], [class*="bg-blue" i], [class*="bg-indigo" i], [aria-current="page"], [data-state="active"], [data-active="true"]');
                         if (isSelected) {
                             activeIndex = idx + 1;
                             const attrVal = item.getAttribute('data-page') || item.getAttribute('data-page-number');
@@ -1264,17 +1264,21 @@ const NanoProAutoDetector = (function () {
                         }
                     });
 
-                    const currentPage = activePageNum || (activeIndex > 0 ? activeIndex : 1);
-                    const totalPages = Math.max(totalThumbs, currentPage);
-                    const info = {
-                        currentPage: currentPage,
-                        totalPages: totalPages,
-                        isMultiPage: totalPages > 1,
-                        raw: `Page ${currentPage} of ${totalPages}`,
-                        source: 'thumbnail-strip'
-                    };
-                    console.log(`[NanoPro AutoDetector] Page info detected (thumbnail-strip): Current=${info.currentPage}, Total=${info.totalPages}`);
-                    return info;
+                    // Only accept S4 if an active thumbnail was genuinely identified!
+                    // Never default to Page 1 when thumbnail selection is uncertain, to prevent pre-empting true pager inputs.
+                    if (activePageNum || activeIndex > 0) {
+                        const currentPage = activePageNum || activeIndex;
+                        const totalPages = Math.max(totalThumbs, currentPage);
+                        const info = {
+                            currentPage: currentPage,
+                            totalPages: totalPages,
+                            isMultiPage: totalPages > 1,
+                            raw: `Page ${currentPage} of ${totalPages}`,
+                            source: 'thumbnail-strip'
+                        };
+                        console.log(`[NanoPro AutoDetector] Page info detected (thumbnail-strip): Current=${info.currentPage}, Total=${info.totalPages}`);
+                        return info;
+                    }
                 }
             }
 
@@ -1308,7 +1312,7 @@ const NanoProAutoDetector = (function () {
                 const text = (el.textContent || '').trim();
                 if (text.length > 80) continue;
 
-                // Match "Page 1 of 3"
+                // Match "Page 1 of 3", "Page: 1 / 3"
                 const directMatch = text.match(/\bpage\s*[:#]?\s*(\d+)\s*(?:of|\/)\s*(\d+)\b/i);
                 if (directMatch) {
                     const currentPage = parseInt(directMatch[1], 10) || 1;
@@ -1323,6 +1327,26 @@ const NanoProAutoDetector = (function () {
                         };
                         console.log(`[NanoPro AutoDetector] Page info detected (direct): Current=${info.currentPage}, Total=${info.totalPages}`);
                         return info;
+                    }
+                }
+
+                // Match concise "1 / 3" or "1 of 3" (without word "page", but with clear bounded length)
+                if (text.length <= 25) {
+                    const conciseMatch = text.match(/^(\d+)\s*(?:of|\/)\s*(\d+)$/i);
+                    if (conciseMatch) {
+                        const currentPage = parseInt(conciseMatch[1], 10) || 1;
+                        const totalPages = parseInt(conciseMatch[2], 10) || 1;
+                        if (currentPage <= totalPages && totalPages > 1 && totalPages <= 500) {
+                            const info = {
+                                currentPage: currentPage,
+                                totalPages: totalPages,
+                                isMultiPage: true,
+                                raw: `Page ${currentPage} of ${totalPages}`,
+                                source: 'direct-concise-text'
+                            };
+                            console.log(`[NanoPro AutoDetector] Page info detected (direct-concise-text): Current=${info.currentPage}, Total=${info.totalPages}`);
+                            return info;
+                        }
                     }
                 }
             }

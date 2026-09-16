@@ -108,6 +108,26 @@ const NanoProPanel = (function () {
     }
 
     /**
+     * Show loading placeholder in panel while page settles or reverifies
+     */
+    showLoading(pageNumber = null) {
+      if (!this.element) return;
+      const body = this.element.querySelector('.nanopro-panel-body');
+      if (!body) return;
+      body.innerHTML = `
+        <div class="nanopro-empty" style="padding: 28px 16px; text-align: center;">
+          <div class="nanopro-empty-icon" style="display: inline-block; font-size: 24px;">⏳</div>
+          <div style="font-weight: 600; color: #1e293b; margin-top: 8px; font-size: 13px;">
+            ${pageNumber ? `Detecting Page ${pageNumber}...` : 'Verifying page...'}
+          </div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">
+            Reading table and sidebar fields
+          </div>
+        </div>
+      `;
+    }
+
+    /**
      * Render validation results - ALL ROWS
      */
     render(validationResult) {
@@ -672,6 +692,7 @@ const NanoProPanel = (function () {
     close: () => panel.close(),
     toggle: () => panel.toggle(),
     render: (results) => panel.render(results),
+    showLoading: (pageNum) => panel.showLoading(pageNum),
     onRefresh: (callback) => panel.onRefresh(callback),
     isOpen: () => panel.getIsOpen(),
     remove: () => panel.remove()

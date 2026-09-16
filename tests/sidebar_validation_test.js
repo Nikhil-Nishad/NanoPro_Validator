@@ -1358,113 +1358,117 @@ function testMultiPageTotalPlacement() {
         const cumulativeSum = recordedPages.reduce((sum, p) => sum + (store.pages[p].sumAmount || 0), 0);
         const effectiveInvoiceAmount = liveInvoiceAmount || (recordedLastInvoiceAmount ? { value: recordedLastInvoiceAmount } : null);
 
-        // Check if invoice_amount is placed on earlier pages
-        if (currentPage < totalPages && liveInvoiceAmount && liveInvoiceAmount.value) {
-            return {
-                status: 'ERROR',
-                message: `invoice_amount should only appear on the last page (Page ${totalPages}), not on Page ${currentPage}`,
-                isEarlyTotalError: true
-            };
-        }
-
-        // Earlier page evaluation:
-        if (currentPage < totalPages) {
-            // Check if all pages are already recorded and match
-            const allVisited = recordedPages.length === totalPages;
-            if (allVisited && effectiveInvoiceAmount) {
-                const diff = Math.abs(cumulativeSum - effectiveInvoiceAmount.value);
-                if (diff <= 0.10) {
-                    return {
-                        status: 'MATCH',
-                        isMultiPage: true,
-                        sumAmount: cumulativeSum,
-                        invoiceAmount: effectiveInvoiceAmount.value,
-                        difference: diff
-                    };
-                }
-            }
-            return {
-                status: 'MULTI_PAGE_PENDING',
-                isMultiPage: true,
-                currentPage,
-                totalPages,
-                pageSum: store.pages[currentPage]?.sumAmount || 0,
-                sumAmount: cumulativeSum,
-                recordedPages
-            };
-        }
-
-        // On last page (currentPage === totalPages):
-        if (!effectiveInvoiceAmount || effectiveInvoiceAmount.value === null) {
-            return {
-                status: 'NOT_FOUND',
-                isMultiPage: true,
-                sumAmount: cumulativeSum
-            };
-        }
-
-        // Check for missing pages
-        const missingPages = [];
-        for (let p = 1; p < totalPages; p++) {
-            if (!store.pages[p]) missingPages.push(p);
-        }
-        if (missingPages.length > 0) {
-            return {
-                status: 'PAGES_MISSING',
-                isMultiPage: true,
-                missingPages,
-                sumAmount: cumulativeSum,
-                invoiceAmount: effectiveInvoiceAmount.value
-            };
-        }
-
-        const diff = Math.abs(cumulativeSum - effectiveInvoiceAmount.value);
+    // Check if invoice_amount is placed on earlier pages — keep it pending until all pages are recorded
+    if (currentPage < totalPages && liveInvoiceAmount && liveInvoiceAmount.value) {
         return {
-            status: diff <= 0.10 ? 'MATCH' : 'MISMATCH',
-            isMultiPage: true,
+            status: 'MULTI_PAGE_PENDING',
+            message: `invoice_amount pending until all pages recorded`,
+            isPendingInvoiceAmount: true,
+            invoiceAmount: liveInvoiceAmount.value,
             sumAmount: cumulativeSum,
-            invoiceAmount: effectiveInvoiceAmount.value,
-            difference: diff
+            currentPage,
+            totalPages
         };
     }
 
-    const store = {
-        pages: {
-            1: { sumAmount: 50.00 }
+    // Earlier page evaluation:
+    if (currentPage < totalPages) {
+        // Check if all pages are already recorded and match
+        const allVisited = recordedPages.length === totalPages;
+        if (allVisited && effectiveInvoiceAmount) {
+            const diff = Math.abs(cumulativeSum - effectiveInvoiceAmount.value);
+            if (diff <= 0.10) {
+                return {
+                    status: 'MATCH',
+                    isMultiPage: true,
+                    sumAmount: cumulativeSum,
+                    invoiceAmount: effectiveInvoiceAmount.value,
+                    difference: diff
+                };
+            }
         }
+        return {
+            status: 'MULTI_PAGE_PENDING',
+            isMultiPage: true,
+            currentPage,
+            totalPages,
+            pageSum: store.pages[currentPage]?.sumAmount || 0,
+            sumAmount: cumulativeSum,
+            recordedPages
+        };
+    }
+
+    // On last page (currentPage === totalPages):
+    if (!effectiveInvoiceAmount || effectiveInvoiceAmount.value === null) {
+        return {
+            status: 'NOT_FOUND',
+            isMultiPage: true,
+            sumAmount: cumulativeSum
+        };
+    }
+
+    // Check for missing pages
+    const missingPages = [];
+    for (let p = 1; p < totalPages; p++) {
+        if (!store.pages[p]) missingPages.push(p);
+    }
+    if (missingPages.length > 0) {
+        return {
+            status: 'PAGES_MISSING',
+            isMultiPage: true,
+            missingPages,
+            sumAmount: cumulativeSum,
+            invoiceAmount: effectiveInvoiceAmount.value
+        };
+    }
+
+    const diff = Math.abs(cumulativeSum - effectiveInvoiceAmount.value);
+    return {
+        status: diff <= 0.10 ? 'MATCH' : 'MISMATCH',
+        isMultiPage: true,
+        sumAmount: cumulativeSum,
+        invoiceAmount: effectiveInvoiceAmount.value,
+        difference: diff
     };
+}
 
-    // 1. On Page 1 (earlier page), no live invoice amount: should return MULTI_PAGE_PENDING
-    const p1Pending = evaluatePageTotal(store, 1, 3, null, null);
-    assert.strictEqual(p1Pending.status, 'MULTI_PAGE_PENDING');
-    assert.strictEqual(p1Pending.sumAmount, 50.00);
+const store = {
+    pages: {
+        1: { sumAmount: 50.00 }
+    }
+};
 
-    // 2. On Page 1, but invoice_amount is incorrectly present on Page 1:
-    const p1EarlyError = evaluatePageTotal(store, 1, 3, { value: 150.00 }, null);
-    assert.strictEqual(p1EarlyError.status, 'ERROR');
-    assert.ok(p1EarlyError.isEarlyTotalError);
-    assert.ok(p1EarlyError.message.includes('should only appear on the last page'));
+// 1. On Page 1 (earlier page), no live invoice amount: should return MULTI_PAGE_PENDING
+const p1Pending = evaluatePageTotal(store, 1, 3, null, null);
+assert.strictEqual(p1Pending.status, 'MULTI_PAGE_PENDING');
+assert.strictEqual(p1Pending.sumAmount, 50.00);
 
-    // 3. User navigates to Page 2 (sum: $60.00)
-    store.pages[2] = { sumAmount: 60.00 };
-    const p2Pending = evaluatePageTotal(store, 2, 3, null, null);
-    assert.strictEqual(p2Pending.status, 'MULTI_PAGE_PENDING');
-    assert.strictEqual(p2Pending.sumAmount, 110.00);
+// 2. On Page 1, invoice_amount found on Page 1: must be remembered and kept pending (NOT an error!)
+const p1PendingWithInv = evaluatePageTotal(store, 1, 3, { value: 150.00 }, null);
+assert.strictEqual(p1PendingWithInv.status, 'MULTI_PAGE_PENDING');
+assert.strictEqual(p1PendingWithInv.isPendingInvoiceAmount, true);
+assert.strictEqual(p1PendingWithInv.invoiceAmount, 150.00);
 
-    // 4. User navigates to Page 3 (sum: $40.00, live invoice_amount: $150.00)
-    store.pages[3] = { sumAmount: 40.00 };
-    const p3Match = evaluatePageTotal(store, 3, 3, { value: 150.00 }, 150.00);
-    assert.strictEqual(p3Match.status, 'MATCH');
-    assert.strictEqual(p3Match.sumAmount, 150.00);
-    assert.strictEqual(p3Match.invoiceAmount, 150.00);
-    assert.strictEqual(p3Match.difference, 0.00);
+// 3. User navigates to Page 2 (sum: $60.00)
+store.pages[2] = { sumAmount: 60.00 };
+const p2Pending = evaluatePageTotal(store, 2, 3, null, 150.00);
+assert.strictEqual(p2Pending.status, 'MULTI_PAGE_PENDING');
+assert.strictEqual(p2Pending.sumAmount, 110.00);
 
-    // 5. User navigates back to Page 1:
-    // With all pages visited and remembered invoice amount $150.00, it stays MATCH
-    const p1Revisit = evaluatePageTotal(store, 1, 3, null, 150.00);
-    assert.strictEqual(p1Revisit.status, 'MATCH', 'Navigating back to Page 1 after completion must maintain MATCH status');
+// 4. User navigates to Page 3 (sum: $40.00, live invoice_amount: $150.00)
+store.pages[3] = { sumAmount: 40.00 };
+const p3Match = evaluatePageTotal(store, 3, 3, { value: 150.00 }, 150.00);
+assert.strictEqual(p3Match.status, 'MATCH');
+assert.strictEqual(p3Match.sumAmount, 150.00);
+assert.strictEqual(p3Match.invoiceAmount, 150.00);
+assert.strictEqual(p3Match.difference, 0.00);
 
-    console.log('  Passed ✅');
+// 5. User navigates back to Page 1:
+// With all pages visited and remembered invoice amount $150.00, it stays MATCH
+const p1Revisit = evaluatePageTotal(store, 1, 3, null, 150.00);
+assert.strictEqual(p1Revisit.status, 'MATCH', 'Navigating back to Page 1 after completion must maintain MATCH status');
+
+console.log('  Passed ✅');
 }
 
 // ============================================================
@@ -3484,6 +3488,152 @@ function testRequiredTableColumnsValidation() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 34: Multi-Page Table-less Page 1 Isolation & Flip Verification
+// ============================================================
+function testMultiPageTablelessPage1Isolation() {
+    console.log('Test 34: Multi-Page Table-less Page 1 Isolation & Flip Verification');
+
+    const multiPageStore = {
+        totalPages: 3,
+        lastInvoiceAmount: null,
+        pages: {}
+    };
+
+    function simulateProcessPage(pageNum, totalPages, rows, hasNoTable, liveInvoice = null) {
+        let pageSum = 0;
+        let pageRows = 0;
+        if (!hasNoTable && rows && rows.length > 0) {
+            rows.forEach(r => {
+                pageSum += r.amount;
+                pageRows++;
+            });
+        }
+        pageSum = Math.round(pageSum * 100) / 100;
+
+        multiPageStore.totalPages = Math.max(multiPageStore.totalPages, totalPages);
+        multiPageStore.pages[pageNum] = {
+            pageNumber: pageNum,
+            sumAmount: pageSum,
+            rowCount: pageRows,
+            totalRows: rows ? rows.length : 0,
+            hasNoTable: !!hasNoTable,
+            status: 'VALID'
+        };
+
+        if (liveInvoice && liveInvoice.value !== null) {
+            multiPageStore.lastInvoiceAmount = liveInvoice;
+        }
+
+        const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
+        let cumulativeSum = 0;
+        const pageBreakdown = {};
+        for (const p of recordedPages) {
+            const pAmt = multiPageStore.pages[p].sumAmount;
+            cumulativeSum += pAmt;
+            pageBreakdown[p] = pAmt;
+        }
+        cumulativeSum = Math.round(cumulativeSum * 100) / 100;
+
+        const effectiveInv = liveInvoice || multiPageStore.lastInvoiceAmount;
+        const hasAllPages = recordedPages.length === totalPages;
+
+        if (!effectiveInv || effectiveInv.value === null) {
+            return {
+                status: 'MULTI_PAGE_PENDING',
+                isMultiPage: true,
+                currentPage: pageNum,
+                totalPages: totalPages,
+                pageSum: pageSum,
+                sumAmount: cumulativeSum,
+                recordedPages: recordedPages,
+                pageBreakdown: pageBreakdown,
+                invoiceAmount: null
+            };
+        }
+
+        if (!hasAllPages) {
+            return {
+                status: 'MULTI_PAGE_PENDING',
+                isMultiPage: true,
+                currentPage: pageNum,
+                totalPages: totalPages,
+                pageSum: pageSum,
+                sumAmount: cumulativeSum,
+                recordedPages: recordedPages,
+                pageBreakdown: pageBreakdown,
+                invoiceAmount: effectiveInv.value
+            };
+        }
+
+        const diff = Math.round(Math.abs(cumulativeSum - effectiveInv.value) * 100) / 100;
+        const isMatch = diff <= 0.10;
+
+        return {
+            status: isMatch ? 'MATCH' : 'MISMATCH',
+            isMultiPage: true,
+            currentPage: pageNum,
+            totalPages: totalPages,
+            pageSum: pageSum,
+            sumAmount: cumulativeSum,
+            recordedPages: recordedPages,
+            pageBreakdown: pageBreakdown,
+            invoiceAmount: effectiveInv.value,
+            difference: diff
+        };
+    }
+
+    // Step 1: User is on Page 1 (NO TABLE on Page 1)
+    const p1Result = simulateProcessPage(1, 3, [], true /* hasNoTable */, null);
+    assert.strictEqual(p1Result.status, 'MULTI_PAGE_PENDING');
+    assert.strictEqual(p1Result.sumAmount, 0.00);
+    assert.strictEqual(p1Result.pageBreakdown[1], 0.00);
+
+    // Step 2: User flips to Page 2 (has table with rows totaling $150.66)
+    // On flip: delete multiPageStore.pages[2] if any existed
+    delete multiPageStore.pages[2];
+    const p2Rows = [{ amount: 100.00 }, { amount: 50.66 }];
+    const p2Result = simulateProcessPage(2, 3, p2Rows, false /* has table */, null);
+    assert.strictEqual(p2Result.status, 'MULTI_PAGE_PENDING');
+    assert.strictEqual(p2Result.pageSum, 150.66);
+    assert.strictEqual(p2Result.sumAmount, 150.66);
+    assert.strictEqual(p2Result.pageBreakdown[1], 0.00);
+    assert.strictEqual(p2Result.pageBreakdown[2], 150.66);
+
+    // Step 3: User flips BACK to Page 1
+    // On flip: delete multiPageStore.pages[1] and re-detect live DOM
+    delete multiPageStore.pages[1];
+    // Page 1 live DOM has NO table
+    const p1ReturnResult = simulateProcessPage(1, 3, [], true /* hasNoTable */, null);
+    // MUST NOT copy Page 2's $150.66 into Page 1!
+    assert.strictEqual(p1ReturnResult.pageSum, 0.00, 'Page 1 sum must remain $0.00');
+    assert.strictEqual(p1ReturnResult.sumAmount, 150.66, 'Cumulative sum must remain $150.66, not duplicated to $301.32');
+    assert.strictEqual(p1ReturnResult.pageBreakdown[1], 0.00, 'Page 1 breakdown pill must be $0.00');
+    assert.strictEqual(p1ReturnResult.pageBreakdown[2], 150.66, 'Page 2 breakdown pill must be $150.66');
+
+    // Step 4: User flips to Page 3 (has table totaling $29.14 and invoice_amount = 179.80)
+    delete multiPageStore.pages[3];
+    const p3Rows = [{ amount: 29.14 }];
+    const p3Result = simulateProcessPage(3, 3, p3Rows, false, { value: 179.80, raw: '179.80' });
+
+    assert.strictEqual(p3Result.status, 'MATCH', 'All 3 pages must MATCH invoice total');
+    assert.strictEqual(p3Result.sumAmount, 179.80, 'Cumulative sum must be exactly 0.00 + 150.66 + 29.14 = 179.80');
+    assert.strictEqual(p3Result.invoiceAmount, 179.80);
+    assert.strictEqual(p3Result.difference, 0.00);
+    assert.strictEqual(p3Result.pageBreakdown[1], 0.00);
+    assert.strictEqual(p3Result.pageBreakdown[2], 150.66);
+    assert.strictEqual(p3Result.pageBreakdown[3], 29.14);
+
+    // Step 5: User flips back to Page 1 and clicks Refresh
+    delete multiPageStore.pages[1];
+    const p1Refreshed = simulateProcessPage(1, 3, [], true, null);
+    assert.strictEqual(p1Refreshed.status, 'MATCH', 'Maintaining MATCH state after returning to Page 1');
+    assert.strictEqual(p1Refreshed.sumAmount, 179.80, 'Cumulative sum must stay 179.80, never 330.46');
+    assert.strictEqual(p1Refreshed.difference, 0.00);
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -3509,8 +3659,10 @@ testTradePartnerMultiPageVsSinglePage();
 testTablelessPageAccumulationAndStateIsolation();
 testPage1TablePreservationOnNavigation();
 testRequiredTableColumnsValidation();
+testMultiPageTablelessPage1Isolation();
 
-console.log('--- ALL 33 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 34 TEST SUITES PASSED SUCCESSFULLY! ---');
+
 
 
 
