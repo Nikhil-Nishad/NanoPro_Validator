@@ -39,7 +39,8 @@
         lastInvoiceAmount: null,
         lastInvoiceNumber: null,
         tradePartnerName: null,
-        pages: {} // pageNum -> { sumAmount: number, rowCount: number, results: array, timestamp: number }
+        invoiceAmountPages: {}, // pageNum -> { page, value, raw, invoiceNumber, count, multiple }
+        pages: {} // pageNum -> { pageNumber, invoiceNumber, sumAmount: number, rowCount: number, results: array, timestamp: number }
     };
 
     // Sidebar fields persistent memory (retained while scrolling within the same document instance)
@@ -186,10 +187,10 @@
                 // If invoice number changed across pages in multiPageStore, it's a new invoice
                 if (multiPageStore.lastInvoiceNumber && 
                     multiPageStore.lastInvoiceNumber.toLowerCase() !== live.invoiceNumber.value.toLowerCase()) {
-                    console.log(`[NanoPro v3] New invoice detected within document: "${multiPageStore.lastInvoiceNumber}" -> "${live.invoiceNumber.value}". Starting fresh multi-page accumulation.`);
-                    multiPageStore.pages = {};
+                    console.log(`[NanoPro v4] New invoice detected within document: "${multiPageStore.lastInvoiceNumber}" -> "${live.invoiceNumber.value}". Partitioning pages by invoice_number.`);
+                    // In multi-page files, preserve page history across invoices
                     multiPageStore.lastInvoiceAmount = null;
-                    multiPageStore.tradePartnerName = null;
+                    sidebarMemory.invoiceAmount = null;
                 }
                 multiPageStore.lastInvoiceNumber = live.invoiceNumber.value;
                 sidebarMemory.invoiceNumber = { ...live.invoiceNumber, isRemembered: false };
@@ -1277,25 +1278,29 @@
         const currentInvNum = fields.invoiceNumber?.value || null;
         if (currentInvNum && multiPageStore.lastInvoiceNumber && 
             currentInvNum.toLowerCase() !== multiPageStore.lastInvoiceNumber.toLowerCase()) {
-            console.log(`[NanoPro v3] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Resetting multi-page accumulation.`);
-            multiPageStore.pages = {};
+            console.log(`[NanoPro v4] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Partitioning by invoice_number.`);
+            // In multi-page files, preserve page history across invoices; reset invoice cache
             multiPageStore.lastInvoiceAmount = null;
-            multiPageStore.tradePartnerName = null;
+            sidebarMemory.invoiceAmount = null;
         }
         if (currentInvNum) {
             multiPageStore.lastInvoiceNumber = currentInvNum;
         }
 
-        // Update multiPageStore
-        if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash, multiPageStore.lastInvoiceNumber, currentInvNum)) {
+        // Update multiPageStore file instance
+        const currHashNorm = (window.location.hash || '').split('?')[0].split('&')[0];
+        const prevHashNorm = (multiPageStore.fileHash || '').split('?')[0].split('&')[0];
+        if (!multiPageStore.fileHash || (prevHashNorm && currHashNorm && prevHashNorm !== currHashNorm)) {
             multiPageStore.fileHash = window.location.hash;
             multiPageStore.pages = {};
+            multiPageStore.invoiceAmountPages = {};
             multiPageStore.lastInvoiceAmount = null;
             multiPageStore.tradePartnerName = null;
         }
         multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
         multiPageStore.pages[currentPage] = {
             pageNumber: currentPage,
+            invoiceNumber: currentInvNum,
             sumAmount: pageSum,
             rowCount: pageSummedRows,
             totalRows: (validationResult.results || []).length,
@@ -1312,8 +1317,35 @@
             results: validationResult.results || [],
             timestamp: Date.now()
         };
-        if (fields.invoiceAmount) {
+
+        // Live invoice amount detection on current page
+        const liveInv = NanoProAutoDetector.findInvoiceAmount ? NanoProAutoDetector.findInvoiceAmount() : null;
+        if (liveInv && liveInv.value !== null) {
+            if (!multiPageStore.invoiceAmountPages) multiPageStore.invoiceAmountPages = {};
+            multiPageStore.invoiceAmountPages[currentPage] = {
+                page: currentPage,
+                value: liveInv.value,
+                raw: liveInv.raw,
+                count: liveInv.count || 1,
+                multiple: !!liveInv.multiple,
+                selector: liveInv.selector,
+                invoiceNumber: currentInvNum
+            };
+            multiPageStore.lastInvoiceAmount = liveInv;
+            sidebarMemory.invoiceAmount = liveInv;
+        } else if (fields.invoiceAmount && !fields.invoiceAmount.isRemembered) {
+            if (!multiPageStore.invoiceAmountPages) multiPageStore.invoiceAmountPages = {};
+            multiPageStore.invoiceAmountPages[currentPage] = {
+                page: currentPage,
+                value: fields.invoiceAmount.value,
+                raw: fields.invoiceAmount.raw,
+                count: fields.invoiceAmount.count || 1,
+                multiple: !!fields.invoiceAmount.multiple,
+                selector: fields.invoiceAmount.selector,
+                invoiceNumber: currentInvNum
+            };
             multiPageStore.lastInvoiceAmount = fields.invoiceAmount;
+            sidebarMemory.invoiceAmount = fields.invoiceAmount;
         }
 
         // Attach total validation (calculates multi-page sums and aggregates page statuses)
@@ -1344,6 +1376,12 @@
             const totalPages = Math.max(page?.totalPages || 1, multiPageStore.totalPages || 1);
             const isMultiPage = totalPages > 1;
 
+            // Identify active invoice number
+            const currentInvoiceNumber = (page?.invoiceNumber) ||
+                                         (result.sidebarValidation?.invoiceNumber?.value) || 
+                                         (multiPageStore.pages[currentPage]?.invoiceNumber) || 
+                                         (multiPageStore.lastInvoiceNumber) || null;
+
             // Current page line amount sum
             let pageSum = 0;
             let pageSummedRows = 0;
@@ -1358,86 +1396,229 @@
             }
             pageSum = NanoProParser.round(pageSum, 2);
 
-            // Cumulative sum across all pages in multiPageStore
+            // Register invoiceAmountInput if provided
+            if (invoiceAmountInput && invoiceAmountInput.value !== null) {
+                if (!multiPageStore.invoiceAmountPages) multiPageStore.invoiceAmountPages = {};
+                multiPageStore.invoiceAmountPages[currentPage] = {
+                    page: currentPage,
+                    value: invoiceAmountInput.value,
+                    raw: invoiceAmountInput.raw || String(invoiceAmountInput.value),
+                    count: invoiceAmountInput.count || 1,
+                    multiple: !!invoiceAmountInput.multiple,
+                    invoiceNumber: currentInvoiceNumber
+                };
+            }
+
+            // Multi-invoice grouping across all recorded pages
+            const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
+            const invoiceGroups = {};
+            for (const p of recordedPages) {
+                const pData = multiPageStore.pages[p];
+                const inv = pData.invoiceNumber ? pData.invoiceNumber.trim() : 'DEFAULT';
+                if (!invoiceGroups[inv]) invoiceGroups[inv] = [];
+                invoiceGroups[inv].push(p);
+            }
+
+            const hasMultipleInvoicesInDoc = Object.keys(invoiceGroups).filter(k => k !== 'DEFAULT').length > 1;
+            let activeInvoicePages = recordedPages;
+            if (currentInvoiceNumber && invoiceGroups[currentInvoiceNumber.trim()]) {
+                activeInvoicePages = invoiceGroups[currentInvoiceNumber.trim()];
+            }
+
+            // Active invoice page boundaries and missing pages
+            const minPageOfInv = activeInvoicePages.length > 0 ? Math.min(...activeInvoicePages) : currentPage;
+            let maxPageOfInv = activeInvoicePages.length > 0 ? Math.max(...activeInvoicePages) : currentPage;
+            const isLastInvoiceInDoc = !hasMultipleInvoicesInDoc || (maxPageOfInv >= totalPages) || 
+                (Math.max(...recordedPages) === maxPageOfInv && maxPageOfInv < totalPages);
+            const expectedLastPageOfInv = isLastInvoiceInDoc ? totalPages : maxPageOfInv;
+
+            const missingPages = [];
+            for (let p = minPageOfInv; p <= expectedLastPageOfInv; p++) {
+                if (!multiPageStore.pages[p]) {
+                    missingPages.push(p);
+                }
+            }
+            const hasAllPages = missingPages.length === 0;
+
+            // Cumulative sum across pages of the ACTIVE INVOICE
             let cumulativeSum = 0;
             let totalSummedRows = 0;
-            const recordedPages = Object.keys(multiPageStore.pages).map(Number).sort((a, b) => a - b);
             const pageBreakdown = {};
             const pagesWithErrors = [];
             const pagesWithCautions = [];
-            const pageStatusList = [];
 
             for (const p of recordedPages) {
                 const pData = multiPageStore.pages[p];
-                cumulativeSum += pData.sumAmount;
-                totalSummedRows += pData.rowCount;
-                pageBreakdown[p] = pData.sumAmount;
+                if (activeInvoicePages.includes(p)) {
+                    cumulativeSum += (pData.sumAmount || 0);
+                    totalSummedRows += (pData.rowCount || 0);
+                    pageBreakdown[p] = pData.sumAmount || 0;
+                }
 
                 if (pData.hasErrors) {
                     pagesWithErrors.push(p);
                 } else if (pData.hasCautions) {
                     pagesWithCautions.push(p);
                 }
+            }
+            cumulativeSum = NanoProParser.round(cumulativeSum, 2);
+
+            // Group all invoice_amount entries by invoice number
+            const allInvAmountEntries = Object.values(multiPageStore.invoiceAmountPages || {});
+            const invAmountsByInv = {};
+            for (const entry of allInvAmountEntries) {
+                const invKey = (entry.invoiceNumber ? entry.invoiceNumber.trim().toLowerCase() : 'default');
+                if (!invAmountsByInv[invKey]) invAmountsByInv[invKey] = [];
+                invAmountsByInv[invKey].push(entry);
+            }
+
+            // Track invoice_amount pages for the active invoice
+            const activeInvKey = (currentInvoiceNumber ? currentInvoiceNumber.trim().toLowerCase() : 'default');
+            const thisInvAmountEntries = invAmountsByInv[activeInvKey] || 
+                (allInvAmountEntries.filter(entry => !entry.invoiceNumber || entry.invoiceNumber === 'DEFAULT'));
+            const thisInvAmountPages = thisInvAmountEntries.map(e => e.page).sort((a, b) => a - b);
+
+            // Effective invoice amount for this invoice
+            const invoiceAmount = invoiceAmountInput || 
+                                  (thisInvAmountEntries.length > 0 ? thisInvAmountEntries[thisInvAmountEntries.length - 1] : null) || 
+                                  NanoProAutoDetector.findInvoiceAmount() || 
+                                  multiPageStore.lastInvoiceAmount || 
+                                  sidebarMemory.invoiceAmount;
+
+            if (invoiceAmount && invoiceAmount.value !== null) {
+                multiPageStore.lastInvoiceAmount = invoiceAmount;
+                sidebarMemory.invoiceAmount = invoiceAmount;
+            }
+
+            // Cautions & Errors Analysis for Active Invoice
+            let hasInvoiceAmountCaution = false;
+            let invoiceAmountCautionType = null;
+            let invoiceAmountCautionMessage = null;
+            let hasInvoiceAmountError = false;
+
+            // Check 1: RED ERROR if 2 or more pages of the SAME invoice_number have invoice_amount
+            if (isMultiPage && thisInvAmountPages.length >= 2) {
+                hasInvoiceAmountError = true;
+                if (!pagesWithErrors.includes(currentPage)) {
+                    pagesWithErrors.push(currentPage);
+                }
+            } else if (isMultiPage && thisInvAmountPages.length === 1) {
+                // Check 2: Caution if invoice_amount is on a non-last page of this invoice
+                const invPage = thisInvAmountPages[0];
+                if (invPage < expectedLastPageOfInv) {
+                    hasInvoiceAmountCaution = true;
+                    invoiceAmountCautionType = 'NON_LAST_PAGE';
+                    invoiceAmountCautionMessage = `invoice_amount ($${thisInvAmountEntries[0].value.toFixed(2)}) found on Page ${invPage} (not the last page, Page ${expectedLastPageOfInv}). Invoices typically have the total on the last page. Reference: invoice_number "${currentInvoiceNumber || 'N/A'}".`;
+                    if (!pagesWithCautions.includes(invPage)) {
+                        pagesWithCautions.push(invPage);
+                    }
+                }
+            }
+
+            // Populate pageStatusList with per-page invoice info and invoice_amount status
+            const pageStatusList = [];
+            for (const p of recordedPages) {
+                const pData = multiPageStore.pages[p];
+                const pInvAmtEntry = multiPageStore.invoiceAmountPages?.[p];
+                const pHasInvAmt = !!pInvAmtEntry;
+
+                // Check invoice grouping for page p
+                const pInvRaw = pData.invoiceNumber ? pData.invoiceNumber.trim() : (currentInvoiceNumber ? currentInvoiceNumber.trim() : 'DEFAULT');
+                const pInvKey = pInvRaw.toLowerCase();
+                const pInvEntries = invAmountsByInv[pInvKey] || [];
+                const pInvPages = pInvEntries.map(e => e.page);
+
+                // Rule: If 2 or more pages of the SAME invoice have invoice_amount -> RED ERROR
+                const isDupError = pHasInvAmt && (pInvEntries.length >= 2);
+
+                // Rule: If invoice_amount is on a non-last page of this invoice -> CAUTION
+                const pInvGroupPages = invoiceGroups[pInvRaw] || [p];
+                const pMaxPageOfGroup = Math.max(...pInvGroupPages);
+                const hasDifferentInvAfter = recordedPages.some(pg => {
+                    if (pg <= pMaxPageOfGroup) return false;
+                    const pgInv = multiPageStore.pages[pg]?.invoiceNumber ? multiPageStore.pages[pg].invoiceNumber.trim() : 'DEFAULT';
+                    return pgInv.toLowerCase() !== pInvKey;
+                });
+                const pExpectedLastPage = hasDifferentInvAfter ? pMaxPageOfGroup : totalPages;
+                const isNonLastCaution = pHasInvAmt && !isDupError && (p < pExpectedLastPage);
+
+                let pStatus = pData.status;
+                let pErrorSummary = pData.errorSummary || 'Valid';
+
+                if (isDupError) {
+                    pStatus = 'INVALID';
+                    pErrorSummary = `Multiple invoice_amount (${pInvPages.map(pg => `P${pg}`).join(', ')})`;
+                    if (!pagesWithErrors.includes(p)) {
+                        pagesWithErrors.push(p);
+                    }
+                } else if (isNonLastCaution && pStatus === 'VALID') {
+                    pStatus = 'CAUTION';
+                    pErrorSummary = 'Caution: invoice_amount on non-last page';
+                    if (!pagesWithCautions.includes(p)) {
+                        pagesWithCautions.push(p);
+                    }
+                }
+
                 pageStatusList.push({
                     page: p,
-                    status: pData.status,
+                    invoiceNumber: pData.invoiceNumber || null,
+                    status: pStatus,
                     calcErrors: pData.calcErrors || 0,
                     itemNoErrors: pData.itemNoErrors || 0,
                     itemNoWarnings: pData.itemNoWarnings || 0,
-                    errorSummary: pData.errorSummary || 'Valid',
+                    errorSummary: pErrorSummary,
                     hasNoTable: !!pData.hasNoTable,
                     sumAmount: pData.sumAmount || 0,
                     rowCount: pData.rowCount || 0,
-                    totalRows: pData.totalRows || 0
+                    totalRows: pData.totalRows || 0,
+                    hasInvoiceAmount: pHasInvAmt,
+                    invoiceAmountValue: pInvAmtEntry ? pInvAmtEntry.value : null,
+                    isInvoiceAmountDup: isDupError,
+                    isInvoiceAmountNonLast: isNonLastCaution
                 });
             }
-            cumulativeSum = NanoProParser.round(cumulativeSum, 2);
 
             result.multiPageErrors = {
                 isMultiPage: isMultiPage,
                 currentPage: currentPage,
                 totalPages: totalPages,
+                invoiceNumber: currentInvoiceNumber,
+                invoiceGroups: invoiceGroups,
                 pagesWithErrors: pagesWithErrors,
                 pagesWithCautions: pagesWithCautions,
                 pageStatusList: pageStatusList
             };
 
-            const missingPages = [];
-            for (let p = 1; p <= totalPages; p++) {
-                if (!multiPageStore.pages[p]) {
-                    missingPages.push(p);
-                }
-            }
-            const hasAllPages = missingPages.length === 0;
-            const isLastPage = (currentPage === totalPages);
+            // Multiplicity check: single-page multiple in DOM OR multi-page same invoice multiple (RED ERROR)
+            if (hasInvoiceAmountError || (invoiceAmount && invoiceAmount.multiple)) {
+                const count = hasInvoiceAmountError ? thisInvAmountPages.length : (invoiceAmount?.count || 2);
+                const errMsg = hasInvoiceAmountError
+                    ? `Multiple invoice_amount instances found across pages [${thisInvAmountPages.join(', ')}] for invoice_number "${currentInvoiceNumber || 'document'}". Each invoice must contain exactly one invoice_amount.`
+                    : `Multiple invoice_amount instances found (${count})`;
 
-            // Find invoice_amount from parameter, sidebar or cache
-            const invoiceAmount = invoiceAmountInput || 
-                                  NanoProAutoDetector.findInvoiceAmount() || 
-                                  multiPageStore.lastInvoiceAmount;
-
-            if (invoiceAmount) {
-                multiPageStore.lastInvoiceAmount = invoiceAmount;
-            }
-
-            // --- Multiplicity check ---
-            if (invoiceAmount && invoiceAmount.multiple) {
                 result.totalValidation = {
                     isMultiPage: isMultiPage,
                     currentPage: currentPage,
                     totalPages: totalPages,
+                    invoiceNumber: currentInvoiceNumber,
+                    activeInvoicePages: activeInvoicePages,
                     pageSum: pageSum,
                     sumAmount: isMultiPage ? cumulativeSum : pageSum,
                     summedRows: isMultiPage ? totalSummedRows : pageSummedRows,
                     recordedPages: recordedPages,
                     missingPages: missingPages,
                     pageBreakdown: pageBreakdown,
-                    invoiceAmount: invoiceAmount.value,
-                    invoiceAmountRaw: invoiceAmount.raw,
+                    pagesWithErrors: pagesWithErrors,
+                    pagesWithCautions: pagesWithCautions,
+                    pageStatusList: pageStatusList,
+                    invoiceAmount: invoiceAmount?.value || null,
+                    invoiceAmountRaw: invoiceAmount?.raw || null,
+                    invoiceAmountPages: thisInvAmountPages,
                     status: 'MULTIPLE_INSTANCES',
-                    message: `Multiple invoice_amount instances found (${invoiceAmount.count})`
+                    hasInvoiceAmountError: true,
+                    message: errMsg
                 };
-                console.warn(`[NanoPro] Total: Multiple invoice_amount instances (${invoiceAmount.count})`);
+                console.warn(`[NanoPro] Total: Multiple invoice_amount instances (${count})`);
                 return;
             }
 
@@ -1448,6 +1629,7 @@
                         isMultiPage: false,
                         currentPage: 1,
                         totalPages: 1,
+                        invoiceNumber: currentInvoiceNumber,
                         pageSum: pageSum,
                         sumAmount: pageSum,
                         summedRows: pageSummedRows,
@@ -1467,11 +1649,13 @@
                     isMultiPage: false,
                     currentPage: 1,
                     totalPages: 1,
+                    invoiceNumber: currentInvoiceNumber,
                     pageSum: pageSum,
                     sumAmount: pageSum,
                     summedRows: pageSummedRows,
                     invoiceAmount: invoiceAmount.value,
                     invoiceAmountRaw: invoiceAmount.raw,
+                    invoiceAmountPages: [1],
                     isRemembered: !!invoiceAmount.isRemembered,
                     difference: diff,
                     tolerance: tolerance,
@@ -1484,18 +1668,14 @@
             }
 
             // --- MULTI PAGE DOCUMENT ---
-            const effectiveInv = invoiceAmount || multiPageStore.lastInvoiceAmount || sidebarMemory.invoiceAmount;
-            if (effectiveInv && effectiveInv.value !== null) {
-                multiPageStore.lastInvoiceAmount = effectiveInv;
-                sidebarMemory.invoiceAmount = effectiveInv;
-            }
-
             // Rule 1: In multi-page files, keep invoice_amount pending until it is found!
-            if (!effectiveInv || effectiveInv.value === null) {
+            if (!invoiceAmount || invoiceAmount.value === null) {
                 result.totalValidation = {
                     isMultiPage: true,
                     currentPage: currentPage,
                     totalPages: totalPages,
+                    invoiceNumber: currentInvoiceNumber,
+                    activeInvoicePages: activeInvoicePages,
                     pageSum: pageSum,
                     sumAmount: cumulativeSum,
                     summedRows: totalSummedRows,
@@ -1506,21 +1686,24 @@
                     pagesWithCautions: pagesWithCautions,
                     pageStatusList: pageStatusList,
                     invoiceAmount: null,
+                    invoiceAmountPages: [],
                     status: 'MULTI_PAGE_PENDING',
                     message: hasAllPages
-                        ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). invoice_amount pending until found in sidebar.`
+                        ? `All ${activeInvoicePages.length} pages accumulated ($${cumulativeSum.toFixed(2)}). invoice_amount pending until found in sidebar.`
                         : `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. invoice_amount pending until found.`
                 };
                 console.log(`[NanoPro v4] MultiPage: Page ${currentPage}/${totalPages} recorded (Sum: ${pageSum}, Cumulative: ${cumulativeSum}). invoice_amount pending.`);
                 return;
             }
 
-            // If invoice_amount IS found, but not all pages have been visited yet:
+            // If invoice_amount IS found, but not all pages of this invoice have been visited yet:
             if (!hasAllPages) {
                 result.totalValidation = {
                     isMultiPage: true,
                     currentPage: currentPage,
                     totalPages: totalPages,
+                    invoiceNumber: currentInvoiceNumber,
+                    activeInvoicePages: activeInvoicePages,
                     pageSum: pageSum,
                     sumAmount: cumulativeSum,
                     summedRows: totalSummedRows,
@@ -1530,18 +1713,23 @@
                     pagesWithErrors: pagesWithErrors,
                     pagesWithCautions: pagesWithCautions,
                     pageStatusList: pageStatusList,
-                    invoiceAmount: effectiveInv.value,
-                    invoiceAmountRaw: effectiveInv.raw,
-                    isRemembered: !!effectiveInv.isRemembered,
+                    invoiceAmount: invoiceAmount.value,
+                    invoiceAmountRaw: invoiceAmount.raw,
+                    invoiceAmountPages: thisInvAmountPages,
+                    isRemembered: !!invoiceAmount.isRemembered,
+                    hasInvoiceAmountCaution: hasInvoiceAmountCaution,
+                    invoiceAmountCautionType: invoiceAmountCautionType,
+                    invoiceAmountCautionMessage: invoiceAmountCautionMessage,
+                    hasInvoiceAmountError: false,
                     status: 'MULTI_PAGE_PENDING',
-                    message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. invoice_amount: $${effectiveInv.value.toFixed(2)}. Visit all pages for final match.`
+                    message: `Page ${currentPage} of ${totalPages} recorded (Sum: $${pageSum.toFixed(2)}). Visited [${recordedPages.join(', ')}] of ${totalPages}. invoice_amount: $${invoiceAmount.value.toFixed(2)}. Visit all pages for final match.`
                 };
-                console.log(`[NanoPro v4] MultiPage: Pages [${missingPages.join(', ')}] pending. invoice_amount=${effectiveInv.value}.`);
+                console.log(`[NanoPro v4] MultiPage: Pages [${missingPages.join(', ')}] pending. invoice_amount=${invoiceAmount.value}.`);
                 return;
             }
 
             // All pages recorded AND invoice_amount present! Compare cumulative sum to invoice_amount
-            const diff = NanoProParser.round(Math.abs(cumulativeSum - effectiveInv.value), 2);
+            const diff = NanoProParser.round(Math.abs(cumulativeSum - invoiceAmount.value), 2);
             const tolerance = 0.10;
             const isMatch = diff <= tolerance;
 
@@ -1549,6 +1737,8 @@
                 isMultiPage: true,
                 currentPage: currentPage,
                 totalPages: totalPages,
+                invoiceNumber: currentInvoiceNumber,
+                activeInvoicePages: activeInvoicePages,
                 pageSum: pageSum,
                 sumAmount: cumulativeSum,
                 summedRows: totalSummedRows,
@@ -1558,18 +1748,23 @@
                 pagesWithErrors: pagesWithErrors,
                 pagesWithCautions: pagesWithCautions,
                 pageStatusList: pageStatusList,
-                invoiceAmount: effectiveInv.value,
-                invoiceAmountRaw: effectiveInv.raw,
-                isRemembered: !!effectiveInv.isRemembered,
+                invoiceAmount: invoiceAmount.value,
+                invoiceAmountRaw: invoiceAmount.raw,
+                invoiceAmountPages: thisInvAmountPages,
+                isRemembered: !!invoiceAmount.isRemembered,
+                hasInvoiceAmountCaution: hasInvoiceAmountCaution,
+                invoiceAmountCautionType: invoiceAmountCautionType,
+                invoiceAmountCautionMessage: invoiceAmountCautionMessage,
+                hasInvoiceAmountError: false,
                 difference: diff,
                 tolerance: tolerance,
                 status: isMatch ? 'MATCH' : 'MISMATCH',
-                selector: effectiveInv.selector,
+                selector: invoiceAmount.selector,
                 message: isMatch
-                    ? `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Matches invoice_amount ($${effectiveInv.value.toFixed(2)}).`
-                    : `All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}). Mismatches invoice_amount ($${effectiveInv.value.toFixed(2)}). Diff: $${diff.toFixed(2)}.`
+                    ? `All ${activeInvoicePages.length} pages accumulated ($${cumulativeSum.toFixed(2)}). Matches invoice_amount ($${invoiceAmount.value.toFixed(2)}).`
+                    : `All ${activeInvoicePages.length} pages accumulated ($${cumulativeSum.toFixed(2)}). Mismatches invoice_amount ($${invoiceAmount.value.toFixed(2)}). Diff: $${diff.toFixed(2)}.`
             };
-            console.log(`[NanoPro v4] MultiPage: All ${totalPages} pages accumulated ($${cumulativeSum.toFixed(2)}) vs invoice_amount ($${effectiveInv.value.toFixed(2)}) -> ${isMatch ? '✅ MATCH' : '❌ MISMATCH'}`);
+            console.log(`[NanoPro v4] MultiPage: All ${activeInvoicePages.length} pages accumulated ($${cumulativeSum.toFixed(2)}) vs invoice_amount ($${invoiceAmount.value.toFixed(2)}) -> ${isMatch ? '✅ MATCH' : '❌ MISMATCH'}`);
             return;
 
         } catch (e) {
@@ -2263,23 +2458,28 @@
             const currentInvNum = fields.invoiceNumber?.value || null;
             if (currentInvNum && multiPageStore.lastInvoiceNumber && 
                 currentInvNum.toLowerCase() !== multiPageStore.lastInvoiceNumber.toLowerCase()) {
-                console.log(`[NanoPro] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Resetting multi-page accumulation.`);
-                multiPageStore.pages = {};
+                console.log(`[NanoPro v4] Invoice number changed (${multiPageStore.lastInvoiceNumber} -> ${currentInvNum}). Partitioning by invoice_number.`);
+                // In multi-page files, preserve page history across invoices; reset invoice cache
                 multiPageStore.lastInvoiceAmount = null;
+                sidebarMemory.invoiceAmount = null;
             }
             if (currentInvNum) {
                 multiPageStore.lastInvoiceNumber = currentInvNum;
             }
 
-            // Update multiPageStore
-            if (!isSameDocumentInstance(multiPageStore.fileHash, window.location.hash, multiPageStore.lastInvoiceNumber, currentInvNum)) {
+            // Update multiPageStore file instance
+            const currHashNorm = (window.location.hash || '').split('?')[0].split('&')[0];
+            const prevHashNorm = (multiPageStore.fileHash || '').split('?')[0].split('&')[0];
+            if (!multiPageStore.fileHash || (prevHashNorm && currHashNorm && prevHashNorm !== currHashNorm)) {
                 multiPageStore.fileHash = window.location.hash;
                 multiPageStore.pages = {};
+                multiPageStore.invoiceAmountPages = {};
                 multiPageStore.lastInvoiceAmount = null;
             }
             multiPageStore.totalPages = Math.max(multiPageStore.totalPages || 1, totalPages);
             multiPageStore.pages[currentPage] = {
                 pageNumber: currentPage,
+                invoiceNumber: currentInvNum,
                 sumAmount: pageSum,
                 rowCount: pageSummedRows,
                 totalRows: validationResult.results.length,
@@ -2295,8 +2495,35 @@
                 results: validationResult.results,
                 timestamp: Date.now()
             };
-            if (fields.invoiceAmount) {
+
+            // Live invoice amount detection on current page
+            const liveInv = NanoProAutoDetector.findInvoiceAmount ? NanoProAutoDetector.findInvoiceAmount() : null;
+            if (liveInv && liveInv.value !== null) {
+                if (!multiPageStore.invoiceAmountPages) multiPageStore.invoiceAmountPages = {};
+                multiPageStore.invoiceAmountPages[currentPage] = {
+                    page: currentPage,
+                    value: liveInv.value,
+                    raw: liveInv.raw,
+                    count: liveInv.count || 1,
+                    multiple: !!liveInv.multiple,
+                    selector: liveInv.selector,
+                    invoiceNumber: currentInvNum
+                };
+                multiPageStore.lastInvoiceAmount = liveInv;
+                sidebarMemory.invoiceAmount = liveInv;
+            } else if (fields.invoiceAmount && !fields.invoiceAmount.isRemembered) {
+                if (!multiPageStore.invoiceAmountPages) multiPageStore.invoiceAmountPages = {};
+                multiPageStore.invoiceAmountPages[currentPage] = {
+                    page: currentPage,
+                    value: fields.invoiceAmount.value,
+                    raw: fields.invoiceAmount.raw,
+                    count: fields.invoiceAmount.count || 1,
+                    multiple: !!fields.invoiceAmount.multiple,
+                    selector: fields.invoiceAmount.selector,
+                    invoiceNumber: currentInvNum
+                };
                 multiPageStore.lastInvoiceAmount = fields.invoiceAmount;
+                sidebarMemory.invoiceAmount = fields.invoiceAmount;
             }
 
             attachTotalValidation(validationResult, fields.invoiceAmount, pageInfo);
@@ -2383,12 +2610,21 @@
                 sidebarMemory.invoiceNumber = liveInvNumObj;
                 multiPageStore.lastInvoiceNumber = liveInvNum;
             } else if (liveInvNum.toLowerCase() !== lastKnownInvoiceNumber.toLowerCase()) {
-                console.log(`[NanoPro v3] Method 2: invoice_number changed (${lastKnownInvoiceNumber} -> ${liveInvNum}). Resetting and reverifying from start!`);
-                lastKnownInvoiceNumber = liveInvNum;
-                resetState();
+                console.log(`[NanoPro v4] Method 2: invoice_number changed (${lastKnownInvoiceNumber} -> ${liveInvNum}).`);
                 lastKnownInvoiceNumber = liveInvNum;
                 sidebarMemory.invoiceNumber = liveInvNumObj;
                 multiPageStore.lastInvoiceNumber = liveInvNum;
+                multiPageStore.lastInvoiceAmount = null;
+                sidebarMemory.invoiceAmount = null;
+
+                const detectedPage = NanoProAutoDetector.detectPageInfo ? NanoProAutoDetector.detectPageInfo() : null;
+                const isMulti = (multiPageStore.totalPages > 1) || (detectedPage && detectedPage.totalPages > 1);
+                if (!isMulti) {
+                    resetState();
+                    lastKnownInvoiceNumber = liveInvNum;
+                    sidebarMemory.invoiceNumber = liveInvNumObj;
+                    multiPageStore.lastInvoiceNumber = liveInvNum;
+                }
                 NanoProBadge.setLoading();
                 if (currentMode === 'auto') {
                     scheduleAutoDetect(10);
@@ -2558,6 +2794,8 @@
             totalPages: 1,
             lastInvoiceAmount: null,
             lastInvoiceNumber: null,
+            tradePartnerName: null,
+            invoiceAmountPages: {},
             pages: {}
         };
         sidebarMemory = {
@@ -2612,16 +2850,17 @@
 
         const hasTotalMismatch = result.totalValidation && result.totalValidation.status === 'MISMATCH';
         const hasTotalNotFound = result.totalValidation && result.totalValidation.status === 'NOT_FOUND';
-        const hasTotalMultiple = result.totalValidation && result.totalValidation.status === 'MULTIPLE_INSTANCES';
+        const hasTotalMultiple = result.totalValidation && (result.totalValidation.status === 'MULTIPLE_INSTANCES' || result.totalValidation.hasInvoiceAmountError);
         const hasTotalPagesMissing = result.totalValidation && result.totalValidation.status === 'PAGES_MISSING';
         const isMultiPagePending = result.totalValidation && result.totalValidation.status === 'MULTI_PAGE_PENDING';
+        const hasTotalCaution = result.totalValidation && result.totalValidation.hasInvoiceAmountCaution;
 
         // Errors: current page errors (calculation mismatches, sidebar failures, item_no errors, missing columns, multiple totals) + errors on other scanned pages
         const currentPageErrorCount = (summary?.invalid || 0) + sidebarErrors.length + itemNoErrors.length + columnErrors.length + (hasTotalMultiple ? 1 : 0);
         const totalErrorCount = currentPageErrorCount + (isMulti ? otherPagesWithErrors.length : 0);
 
-        // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing, or missing earlier pages
-        const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound || hasTotalPagesMissing;
+        // Cautions: item_no cautions (e.g. missing -R on rental), total mismatch/missing, missing earlier pages, or non-last page invoice_amount
+        const isCaution = itemNoWarnings.length > 0 || hasTotalMismatch || hasTotalNotFound || hasTotalPagesMissing || hasTotalCaution;
 
         const badgeEl = NanoProOverlay.getShadow()?.querySelector('.nanopro-badge');
 
@@ -2673,6 +2912,10 @@
             if (hasTotalMismatch) cautionMessages.push(result.totalValidation?.isMultiPage ? 'Multi Total Mismatch' : 'Total Mismatch');
             if (hasTotalNotFound) {
                 cautionMessages.push(isAllScannedPendingTotal ? 'Scroll to Total' : 'Missing Total');
+            }
+            if (hasTotalCaution) {
+                const pgs = result.totalValidation?.invoiceAmountPages || [];
+                cautionMessages.push(pgs.length > 0 ? `Inv Total on P${pgs.join(',')}` : 'Inv Total Caution');
             }
             if (itemNoWarnings.length > 0) cautionMessages.push(`${itemNoWarnings.length} Item Caution${itemNoWarnings.length > 1 ? 's' : ''}`);
 

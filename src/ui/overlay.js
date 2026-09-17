@@ -660,6 +660,11 @@ const NanoProOverlay = (function () {
       color: #0369a1;
     }
 
+    .nanopro-pill-caution {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
     .nanopro-sidebar-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -925,6 +930,10 @@ const NanoProOverlay = (function () {
     }
     .nanopro-total-info {
       border-left-color: #94a3b8;
+    }
+    .nanopro-total-caution {
+      border-left-color: #f59e0b;
+      background: #fffbeb;
     }
     .nanopro-total-label {
       font-size: 13px;

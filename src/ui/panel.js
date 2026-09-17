@@ -464,6 +464,23 @@ const NanoProPanel = (function () {
 
       const sumFormatted = NanoProParser.formatNumber(total.sumAmount);
       const isMulti = !!total.isMultiPage;
+      const invPages = total.invoiceAmountPages || [];
+      const invLocationStr = invPages.length > 0 
+        ? ` (found on ${invPages.length === 1 ? `Page ${invPages[0]}` : `Pages [${invPages.join(', ')}]`})` 
+        : '';
+      const invoiceLabel = total.invoiceNumber ? ` • Invoice #${total.invoiceNumber}` : '';
+
+      const cautionBannerHtml = total.hasInvoiceAmountCaution ? `
+        <div class="nanopro-total-caution-banner" style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 6px; padding: 8px 10px; margin-top: 8px;">
+          <div style="font-weight: 600; color: #92400e; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+            <span>⚠️</span>
+            <span>Caution: invoice_amount on Non-Last Page</span>
+          </div>
+          <div style="font-size: 11px; color: #b45309; margin-top: 3px;">
+            ${total.invoiceAmountCautionMessage || 'invoice_amount was detected on a non-last page. Verify final invoice total.'}
+          </div>
+        </div>
+      ` : '';
 
       if (total.status === 'MULTI_PAGE_PENDING') {
         const pageSumFormatted = NanoProParser.formatNumber(total.pageSum);
@@ -471,21 +488,27 @@ const NanoProPanel = (function () {
           .map(([p, amt]) => `<span class="nanopro-pill nanopro-pill-info">Page ${p}: $${NanoProParser.formatNumber(amt)}</span>`)
           .join(' ');
 
+        const invDisplay = total.invoiceAmount !== null && total.invoiceAmount !== undefined
+          ? `<span class="nanopro-total-sep">|</span><span class="nanopro-total-invoice">Invoice: $${NanoProParser.formatNumber(total.invoiceAmount)}${invLocationStr}</span>`
+          : '';
+
         return `
-          <div class="nanopro-total nanopro-total-info">
+          <div class="nanopro-total ${total.hasInvoiceAmountCaution ? 'nanopro-total-caution' : 'nanopro-total-info'}">
             <div class="nanopro-total-header">
-              <span class="nanopro-total-title">📄 Multi-Page Document (Page ${total.currentPage} of ${total.totalPages})</span>
-              <span class="nanopro-pill nanopro-pill-info">${total.recordedPages ? total.recordedPages.length : 1} of ${total.totalPages} Recorded</span>
+              <span class="nanopro-total-title">📄 Multi-Page Document${invoiceLabel} (Page ${total.currentPage} of ${total.totalPages})</span>
+              <span class="nanopro-pill ${total.hasInvoiceAmountCaution ? 'nanopro-pill-caution' : 'nanopro-pill-info'}">${total.recordedPages ? total.recordedPages.length : 1} of ${total.totalPages} Recorded</span>
             </div>
             <div class="nanopro-total-values" style="margin-top: 6px;">
               <span class="nanopro-total-sum">Current Page Sum: ${pageSumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
               <span class="nanopro-total-sum">Cumulative Sum: ${sumFormatted}</span>
+              ${invDisplay}
             </div>
             <div style="margin-top: 6px; font-size: 11px; color: #475569;">
               👉 Navigate to page ${total.totalPages} (last page) to validate against final invoice_amount.
             </div>
             ${breakdownItems ? `<div style="margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap;">${breakdownItems}</div>` : ''}
+            ${cautionBannerHtml}
           </div>
         `;
       }
@@ -495,17 +518,18 @@ const NanoProPanel = (function () {
         return `
           <div class="nanopro-total nanopro-total-mismatch">
             <div class="nanopro-total-header">
-              <span class="nanopro-total-title">⚠️ Multi-Page Total: Missing Earlier Pages</span>
+              <span class="nanopro-total-title">⚠️ Multi-Page Total: Missing Earlier Pages${invoiceLabel}</span>
               <span class="nanopro-pill nanopro-pill-error">Pages [${(total.missingPages || []).join(', ')}] Missing</span>
             </div>
             <div class="nanopro-total-values" style="margin-top: 6px;">
               <span class="nanopro-total-sum">Recorded Sum: ${sumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
-              <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}</span>
+              <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}${invLocationStr}</span>
             </div>
             <div style="margin-top: 6px; font-size: 11px; color: #dc2626; font-weight: 500;">
               Please navigate through page(s) [${(total.missingPages || []).join(', ')}] so all line items are accumulated.
             </div>
+            ${cautionBannerHtml}
           </div>
         `;
       }
@@ -513,7 +537,7 @@ const NanoProPanel = (function () {
       if (total.status === 'NOT_FOUND') {
         return `
           <div class="nanopro-total nanopro-total-info">
-            <div class="nanopro-total-label">${isMulti ? `Multi-Page Invoice Total (${total.totalPages} Pages)` : 'Invoice Total'}</div>
+            <div class="nanopro-total-label">${isMulti ? `Multi-Page Invoice Total${invoiceLabel} (${total.totalPages} Pages)` : 'Invoice Total'}</div>
             <div class="nanopro-total-values">
               <span class="nanopro-total-sum">${isMulti ? 'Cumulative Sum' : 'Sum'}: ${sumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
@@ -526,8 +550,11 @@ const NanoProPanel = (function () {
       if (total.status === 'MULTIPLE_INSTANCES') {
         return `
           <div class="nanopro-total nanopro-total-mismatch">
-            <div class="nanopro-total-label">❌ Multiple Invoice Totals</div>
-            <div class="nanopro-total-values">
+            <div class="nanopro-total-header">
+              <span class="nanopro-total-title">❌ Multiple Invoice Totals${invoiceLabel}</span>
+              <span class="nanopro-pill nanopro-pill-error">Error</span>
+            </div>
+            <div class="nanopro-total-values" style="margin-top: 6px;">
               <span class="nanopro-total-sum">${isMulti ? 'Cumulative Sum' : 'Sum'}: ${sumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
               <span class="nanopro-total-note" style="color: #dc2626; font-weight: 600;">
@@ -541,7 +568,7 @@ const NanoProPanel = (function () {
       if (total.status === 'ERROR') {
         return `
           <div class="nanopro-total nanopro-total-info">
-            <div class="nanopro-total-label">${isMulti ? `Multi-Page Invoice Total (${total.totalPages} Pages)` : 'Invoice Total'}</div>
+            <div class="nanopro-total-label">${isMulti ? `Multi-Page Invoice Total${invoiceLabel} (${total.totalPages} Pages)` : 'Invoice Total'}</div>
             <div class="nanopro-total-values">
               <span class="nanopro-total-sum">${isMulti ? 'Cumulative Sum' : 'Sum'}: ${sumFormatted}</span>
               <span class="nanopro-total-sep">|</span>
@@ -560,18 +587,19 @@ const NanoProPanel = (function () {
         .join(' ') : '';
 
       return `
-        <div class="nanopro-total ${isMatch ? 'nanopro-total-match' : 'nanopro-total-mismatch'}">
+        <div class="nanopro-total ${isMatch ? (total.hasInvoiceAmountCaution ? 'nanopro-total-caution' : 'nanopro-total-match') : 'nanopro-total-mismatch'}">
           <div class="nanopro-total-header">
-            <span class="nanopro-total-title">${isMatch ? '✅' : '❌'} ${isMulti ? `Multi-Page Invoice Total (${total.totalPages} Pages)` : 'Invoice Total'}</span>
-            ${isMulti ? `<span class="nanopro-pill ${isMatch ? 'nanopro-pill-valid' : 'nanopro-pill-error'}">${isMatch ? 'All Pages Match' : 'Mismatch'}</span>` : ''}
+            <span class="nanopro-total-title">${isMatch ? (total.hasInvoiceAmountCaution ? '⚠️' : '✅') : '❌'} ${isMulti ? `Multi-Page Invoice Total${invoiceLabel} (${total.totalPages} Pages)` : 'Invoice Total'}</span>
+            ${isMulti ? `<span class="nanopro-pill ${isMatch ? (total.hasInvoiceAmountCaution ? 'nanopro-pill-caution' : 'nanopro-pill-valid') : 'nanopro-pill-error'}">${isMatch ? (total.hasInvoiceAmountCaution ? 'Caution Match' : 'All Pages Match') : 'Mismatch'}</span>` : ''}
           </div>
           <div class="nanopro-total-values" style="margin-top: 6px;">
             <span class="nanopro-total-sum">${isMulti ? 'Cumulative Sum' : 'Sum'}: ${sumFormatted}</span>
             <span class="nanopro-total-sep">|</span>
-            <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}${total.isRemembered ? ' (remembered)' : ''}</span>
+            <span class="nanopro-total-invoice">Invoice: ${invoiceFormatted}${invLocationStr}${total.isRemembered ? ' (remembered)' : ''}</span>
             ${!isMatch ? `<span class="nanopro-total-sep">|</span><span class="nanopro-total-diff">Diff: ${diffFormatted}</span>` : ''}
           </div>
           ${breakdownItems ? `<div style="margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap;">${breakdownItems}</div>` : ''}
+          ${cautionBannerHtml}
         </div>
       `;
     }
@@ -587,6 +615,7 @@ const NanoProPanel = (function () {
       const pagesWithErrors = multiPage.pagesWithErrors || [];
       const pagesWithCautions = multiPage.pagesWithCautions || [];
       const pageStatusList = multiPage.pageStatusList || [];
+      const invoiceGroups = multiPage.invoiceGroups || {};
 
       const recordedMap = {};
       pageStatusList.forEach(p => { recordedMap[p.page] = p; });
@@ -601,12 +630,12 @@ const NanoProPanel = (function () {
         let detailText = 'Navigate to scan';
 
         if (pData) {
-          if (pData.status === 'INVALID' || (pData.calcErrors > 0 || pData.itemNoErrors > 0 || pData.columnErrors > 0)) {
+          if (pData.status === 'INVALID' || (pData.calcErrors > 0 || pData.itemNoErrors > 0 || pData.columnErrors > 0 || pData.isInvoiceAmountDup)) {
             badgeClass = 'nanopro-page-error';
             icon = '❌';
             statusText = pData.errorSummary || 'Error';
             detailText = `$${NanoProParser.formatNumber(pData.sumAmount)} (${pData.rowCount || pData.totalRows || 0} items)`;
-          } else if (pData.status === 'CAUTION' || pData.itemNoWarnings > 0) {
+          } else if (pData.status === 'CAUTION' || pData.itemNoWarnings > 0 || pData.isInvoiceAmountNonLast) {
             badgeClass = 'nanopro-page-caution';
             icon = '⚠️';
             statusText = pData.errorSummary || 'Caution';
@@ -624,13 +653,26 @@ const NanoProPanel = (function () {
           }
         }
 
+        const invTag = pData?.invoiceNumber ? `
+          <span class="nanopro-inv-subtle" style="font-size: 10px; color: #64748b; font-weight: 500; margin-left: 4px; background: #f1f5f9; padding: 1px 4px; border-radius: 3px;">#${pData.invoiceNumber}</span>
+        ` : '';
+
+        const invAmountPill = (pData && pData.hasInvoiceAmount && pData.invoiceAmountValue !== null) ? `
+          <div style="margin-top: 4px;">
+            <span class="nanopro-pill ${pData.isInvoiceAmountDup ? 'nanopro-pill-error' : (pData.isInvoiceAmountNonLast ? 'nanopro-pill-caution' : 'nanopro-pill-valid')}" style="font-size: 10px;">
+              ${pData.isInvoiceAmountDup ? '❌ Multiple Inv Amt' : (pData.isInvoiceAmountNonLast ? '⚠️ Inv Amt' : '💵 Inv Amt')}: $${NanoProParser.formatNumber(pData.invoiceAmountValue)}
+            </span>
+          </div>
+        ` : '';
+
         cardsHtml += `
           <div class="nanopro-page-card ${badgeClass} ${isCurrent ? 'is-current-page' : ''}">
             <div class="nanopro-page-card-header">
-              <span class="nanopro-page-card-title">${icon} Page ${p} ${isCurrent ? '<span class="nanopro-curr-tag">(Current)</span>' : ''}</span>
+              <span class="nanopro-page-card-title">${icon} Page ${p} ${isCurrent ? '<span class="nanopro-curr-tag">(Current)</span>' : ''}${invTag}</span>
               <span class="nanopro-page-status-pill">${statusText}</span>
             </div>
             <div class="nanopro-page-card-detail">${detailText}</div>
+            ${invAmountPill}
           </div>
         `;
       }
@@ -643,10 +685,20 @@ const NanoProPanel = (function () {
             ? `<span class="nanopro-pill nanopro-pill-valid">All ${totalPages} Pages Clean</span>`
             : `<span class="nanopro-pill nanopro-pill-info">${scannedCount} of ${totalPages} Pages Scanned</span>`);
 
+      const invGroupsEntries = Object.entries(invoiceGroups).filter(([inv]) => inv && inv !== 'DEFAULT');
+      const invoiceSummaryHtml = invGroupsEntries.length > 1 ? `
+        <div style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: 500;">
+          📑 Invoices in document: ${invGroupsEntries.map(([inv, pgs]) => `<strong>#${inv}</strong> (P${pgs[0]}–P${pgs[pgs.length - 1]})`).join(' • ')}
+        </div>
+      ` : '';
+
       return `
         <div class="nanopro-multipage-tracker">
           <div class="nanopro-multipage-header">
-            <span class="nanopro-multipage-title">📑 Page Status (${scannedCount}/${totalPages} Scanned)</span>
+            <div>
+              <span class="nanopro-multipage-title">📑 Page Status (${scannedCount}/${totalPages} Scanned)</span>
+              ${invoiceSummaryHtml}
+            </div>
             ${errorHeader}
           </div>
           <div class="nanopro-multipage-grid">
