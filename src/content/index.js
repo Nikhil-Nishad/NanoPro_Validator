@@ -312,6 +312,15 @@
         if (!effectivePage) {
             effectivePage = { currentPage: 1, totalPages: 1, isMultiPage: false, raw: 'Page 1 of 1' };
         }
+        // AUTHORITATIVE PAGE NUMBER: lastObservedPageNum is set by checkNavigationAndPageFlip()
+        // which verifies the true current page from the DOM at the moment of navigation detection.
+        // The sidebar DOM often lags after a page flip, so always prefer lastObservedPageNum when
+        // it's set and disagrees with the sidebar-derived currentPage.
+        if (typeof lastObservedPageNum !== 'undefined' && lastObservedPageNum !== null &&
+            effectivePage.currentPage !== lastObservedPageNum) {
+            effectivePage = { ...effectivePage, currentPage: lastObservedPageNum };
+        }
+
         if (multiPageStore.totalPages > effectivePage.totalPages) {
             effectivePage = {
                 ...effectivePage,
@@ -1055,6 +1064,11 @@
                         }
                         console.log(`[NanoPro v4] Document page (Page ${pageNum} of ${pInfo?.totalPages || 1}) has no table. Processing as 0-row page...`);
                         lastDetectedStateHash = currentTablelessHash;
+                        // Ensure pageFields.pageInfo.currentPage matches the authoritative pageNum
+                        // so processAutoDetectedRows writes to the correct multiPageStore slot.
+                        if (pageFields.pageInfo && pageFields.pageInfo.currentPage !== pageNum) {
+                            pageFields.pageInfo = { ...pageFields.pageInfo, currentPage: pageNum };
+                        }
                         processAutoDetectedRows([], {}, pageFields, true /* hasNoTable */);
                         return;
                     }
@@ -1093,6 +1107,16 @@
 
             // --- State Hashing for Performance ---
             const sidebarFields = getEffectiveSidebarFields();
+
+            // AUTHORITATIVE PAGE NUMBER: The sidebar DOM may lag behind the actual page flip.
+            // lastObservedPageNum is set by checkNavigationAndPageFlip() which already confirmed
+            // the true current page. If it disagrees with the sidebar, override it so that
+            // processAutoDetectedRows writes rows to the CORRECT multiPageStore.pages[N] slot.
+            if (lastObservedPageNum !== null && sidebarFields.pageInfo &&
+                sidebarFields.pageInfo.currentPage !== lastObservedPageNum) {
+                console.log(`[NanoPro v4] Sidebar pageInfo.currentPage=${sidebarFields.pageInfo.currentPage} is stale. Overriding with lastObservedPageNum=${lastObservedPageNum}.`);
+                sidebarFields.pageInfo = { ...sidebarFields.pageInfo, currentPage: lastObservedPageNum };
+            }
 
             const isRentalHash = (sidebarFields.isRental || []).map(r => r.raw).join(',');
             const sidebarHash = [
