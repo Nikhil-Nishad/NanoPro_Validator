@@ -999,26 +999,42 @@
                 if (isSingleFilePage()) {
                     const pageFields = getEffectiveSidebarFields();
                     const pInfo = pageFields.pageInfo || NanoProAutoDetector.detectPageInfo();
-                    const pageNum = pInfo?.currentPage || 1;
-                    const isDocPage = pInfo && (pInfo.isMultiPage || pInfo.totalPages > 1 || 
+                    let pageNum = pInfo?.currentPage || 1;
+
+                    // AUTHORITATIVE PAGE NUMBER: lastObservedPageNum is set by checkNavigationAndPageFlip()
+                    // which already verified the true current page from the live DOM at detection time.
+                    // If it disagrees with the sidebar-derived pageNum, the sidebar is stale —
+                    // always trust lastObservedPageNum to prevent writing tableless data to the wrong page.
+                    if (lastObservedPageNum !== null && lastObservedPageNum !== pageNum) {
+                        console.log(`[NanoPro v4] pageNum=${pageNum} from sidebar is stale vs lastObservedPageNum=${lastObservedPageNum}. Using authoritative page number.`);
+                        pageNum = lastObservedPageNum;
+                    }
+
+                    const isDocPage = pInfo && (pInfo.isMultiPage || pInfo.totalPages > 1 ||
                         pageFields.environment || pageFields.invoiceAmount || pageFields.tradePartnerName || pageFields.invoiceNumber);
 
                     // Check if this page already had a confirmed table with rows:
                     const existingPageData = multiPageStore.pages?.[pageNum];
                     const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
 
-                    // CRITICAL FIX: During a background poll, if this page already has confirmed table
-                    // data, NEVER overwrite it as "tableless" — the table is just still loading after
-                    // a page flip. Silently return and let the next poll cycle re-detect it.
-                    if (hadExistingTable && isBackgroundPoll && !force) {
-                        return;
-                    }
-
-                    // Also guard against stale page number: if the live observer already knows we
-                    // are on a different page, don't write tableless data for the previous page.
-                    if (hadExistingTable && lastObservedPageNum !== null && lastObservedPageNum !== pageNum && !force) {
-                        console.log(`[NanoPro v4] Stale pageNum=${pageNum} vs lastObservedPageNum=${lastObservedPageNum}, skipping tableless write to protect stored data.`);
-                        return;
+                    // GUARD: If this page already has confirmed table data, NEVER overwrite it as
+                    // tableless — the table is still loading (background poll or post-page-flip retry).
+                    // This applies to both background polls AND force-triggered detections, because
+                    // handlePageFlip fires force=true but the DOM may still show the old page.
+                    if (hadExistingTable && (isBackgroundPoll || !detectResult.success)) {
+                        if (!force) {
+                            return;
+                        }
+                        // Even with force=true, don't wipe confirmed data until we know the page has
+                        // actually settled and the table is genuinely absent (wait for at least 1 retry).
+                        if (retryCount < 1) {
+                            console.log(`[NanoPro v4] Page ${pageNum} has confirmed table data. Waiting for DOM to settle before treating as tableless (retry ${retryCount + 1})...`);
+                            autoDetectTimer = setTimeout(
+                                () => runAutoDetection(retryCount + 1, false, force, Math.max(maxRetries, 2)),
+                                200
+                            );
+                            return;
+                        }
                     }
 
                     if (isDocPage) {
