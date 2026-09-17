@@ -1,17 +1,24 @@
-# Graph Report - NanoPro_extension  (2026-09-15)
+# Graph Report - NanoPro_extension  (2026-09-17)
 
 ## Corpus Check
 - cluster-only mode — file stats not available
 
 ## Summary
-- 416 nodes · 675 edges · 48 communities (27 shown, 21 thin omitted)
+- 416 nodes · 677 edges · 48 communities (27 shown, 21 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 11 edges (avg confidence: 0.53)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `8bbe2c5d`
+- Built from commit: `40f7d61c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
+
+## Recent Changes (2026-09-17)
+- **Bug Fix (index.js / `runAutoDetection`):** Page 1 table data was being erased when navigating to Page 2.
+  - **Root Cause:** During a background poll after a page flip, the table for the new page (Page 2) hadn't loaded yet. The detector couldn't find the table and resolved the page number from stale `sidebarMemory.pageInfo` — which still reported Page 1. It then called `processAutoDetectedRows([], hasNoTable=true)` which overwrote `multiPageStore.pages[1]` with `hasNoTable: true`, erasing the confirmed table data.
+  - **Fix:** Added two guards in `runAutoDetection`:
+    1. If a **background poll** fails to find a table but the page already has confirmed table data → silently return (don't overwrite).
+    2. If the **resolved pageNum is stale** (differs from `lastObservedPageNum`) → skip the tableless write to protect stored data.
 
 ## Community Hubs (Navigation)
 - design_system.py

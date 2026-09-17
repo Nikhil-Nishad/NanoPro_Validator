@@ -1007,6 +1007,20 @@
                     const existingPageData = multiPageStore.pages?.[pageNum];
                     const hadExistingTable = existingPageData && !existingPageData.hasNoTable && existingPageData.totalRows > 0;
 
+                    // CRITICAL FIX: During a background poll, if this page already has confirmed table
+                    // data, NEVER overwrite it as "tableless" — the table is just still loading after
+                    // a page flip. Silently return and let the next poll cycle re-detect it.
+                    if (hadExistingTable && isBackgroundPoll && !force) {
+                        return;
+                    }
+
+                    // Also guard against stale page number: if the live observer already knows we
+                    // are on a different page, don't write tableless data for the previous page.
+                    if (hadExistingTable && lastObservedPageNum !== null && lastObservedPageNum !== pageNum && !force) {
+                        console.log(`[NanoPro v4] Stale pageNum=${pageNum} vs lastObservedPageNum=${lastObservedPageNum}, skipping tableless write to protect stored data.`);
+                        return;
+                    }
+
                     if (isDocPage) {
                         const maxTableWait = 1;
                         if (!force && hadExistingTable && retryCount < maxTableWait && !isBackgroundPoll) {
