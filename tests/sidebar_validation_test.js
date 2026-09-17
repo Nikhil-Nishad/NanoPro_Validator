@@ -3634,6 +3634,337 @@ function testMultiPageTablelessPage1Isolation() {
     console.log('  Passed ✅');
 }
 
+// ============================================================
+// TEST 35: Multi-Page Invoice Amount Detection, Caution for Non-Last Page, Red Error for Duplicate Invoice Amount on Same Invoice, and Multi-Invoice Partitioning
+// ============================================================
+function testMultiPageInvoiceAmountAndMultiInvoicePartitioning() {
+    console.log('Test 35: Multi-Page Invoice Amount Detection, Caution for Non-Last Page, Red Error for Duplicate Invoice Amount on Same Invoice, and Multi-Invoice Partitioning');
+
+    function simulateAttachTotalValidation(store, currentPage, totalPages, currentInvoiceNumber, liveInvoiceAmount) {
+        // Register live invoiceAmount if present
+        if (liveInvoiceAmount && liveInvoiceAmount.value !== null) {
+            if (!store.invoiceAmountPages) store.invoiceAmountPages = {};
+            store.invoiceAmountPages[currentPage] = {
+                page: currentPage,
+                value: liveInvoiceAmount.value,
+                raw: liveInvoiceAmount.raw || String(liveInvoiceAmount.value),
+                invoiceNumber: currentInvoiceNumber
+            };
+        }
+
+        const recordedPages = Object.keys(store.pages).map(Number).sort((a, b) => a - b);
+        const invoiceGroups = {};
+        for (const p of recordedPages) {
+            const pData = store.pages[p];
+            const inv = pData.invoiceNumber ? pData.invoiceNumber.trim() : 'DEFAULT';
+            if (!invoiceGroups[inv]) invoiceGroups[inv] = [];
+            invoiceGroups[inv].push(p);
+        }
+
+        const hasMultipleInvoicesInDoc = Object.keys(invoiceGroups).filter(k => k !== 'DEFAULT').length > 1;
+        let activeInvoicePages = recordedPages;
+        if (currentInvoiceNumber && invoiceGroups[currentInvoiceNumber.trim()]) {
+            activeInvoicePages = invoiceGroups[currentInvoiceNumber.trim()];
+        }
+
+        const minPageOfInv = activeInvoicePages.length > 0 ? Math.min(...activeInvoicePages) : currentPage;
+        let maxPageOfInv = activeInvoicePages.length > 0 ? Math.max(...activeInvoicePages) : currentPage;
+        const isLastInvoiceInDoc = !hasMultipleInvoicesInDoc || (maxPageOfInv >= totalPages) || 
+            (Math.max(...recordedPages) === maxPageOfInv && maxPageOfInv < totalPages);
+        const expectedLastPageOfInv = isLastInvoiceInDoc ? totalPages : maxPageOfInv;
+
+        const missingPages = [];
+        for (let p = minPageOfInv; p <= expectedLastPageOfInv; p++) {
+            if (!store.pages[p]) {
+                missingPages.push(p);
+            }
+        }
+        const hasAllPages = missingPages.length === 0;
+
+        let cumulativeSum = 0;
+        let totalSummedRows = 0;
+        const pageBreakdown = {};
+        const pagesWithErrors = [];
+        const pagesWithCautions = [];
+
+        for (const p of recordedPages) {
+            const pData = store.pages[p];
+            if (activeInvoicePages.includes(p)) {
+                cumulativeSum += (pData.sumAmount || 0);
+                totalSummedRows += (pData.rowCount || 0);
+                pageBreakdown[p] = pData.sumAmount || 0;
+            }
+            if (pData.hasErrors) pagesWithErrors.push(p);
+            else if (pData.hasCautions) pagesWithCautions.push(p);
+        }
+        cumulativeSum = Math.round(cumulativeSum * 100) / 100;
+
+        const allInvAmountEntries = Object.values(store.invoiceAmountPages || {});
+        const invAmountsByInv = {};
+        for (const entry of allInvAmountEntries) {
+            const invKey = (entry.invoiceNumber ? entry.invoiceNumber.trim().toLowerCase() : 'default');
+            if (!invAmountsByInv[invKey]) invAmountsByInv[invKey] = [];
+            invAmountsByInv[invKey].push(entry);
+        }
+
+        const activeInvKey = (currentInvoiceNumber ? currentInvoiceNumber.trim().toLowerCase() : 'default');
+        const thisInvAmountEntries = invAmountsByInv[activeInvKey] || 
+            (allInvAmountEntries.filter(entry => !entry.invoiceNumber || entry.invoiceNumber === 'DEFAULT'));
+        const thisInvAmountPages = thisInvAmountEntries.map(e => e.page).sort((a, b) => a - b);
+
+        const invoiceAmount = (thisInvAmountEntries.length > 0 ? thisInvAmountEntries[thisInvAmountEntries.length - 1] : null);
+
+        let hasInvoiceAmountCaution = false;
+        let invoiceAmountCautionType = null;
+        let invoiceAmountCautionMessage = null;
+        let hasInvoiceAmountError = false;
+
+        // Check 1: RED ERROR if 2 or more pages of the SAME invoice_number have invoice_amount
+        if (totalPages > 1 && thisInvAmountPages.length >= 2) {
+            hasInvoiceAmountError = true;
+            if (!pagesWithErrors.includes(currentPage)) pagesWithErrors.push(currentPage);
+        } else if (totalPages > 1 && thisInvAmountPages.length === 1) {
+            // Check 2: Caution if invoice_amount is on a non-last page of this invoice
+            const invPage = thisInvAmountPages[0];
+            if (invPage < expectedLastPageOfInv) {
+                hasInvoiceAmountCaution = true;
+                invoiceAmountCautionType = 'NON_LAST_PAGE';
+                invoiceAmountCautionMessage = `invoice_amount ($${thisInvAmountEntries[0].value.toFixed(2)}) found on Page ${invPage} (not the last page, Page ${expectedLastPageOfInv}). Invoices typically have the total on the last page. Reference: invoice_number "${currentInvoiceNumber || 'N/A'}".`;
+                if (!pagesWithCautions.includes(invPage)) pagesWithCautions.push(invPage);
+            }
+        }
+
+        const pageStatusList = [];
+        for (const p of recordedPages) {
+            const pData = store.pages[p];
+            const pInvAmtEntry = store.invoiceAmountPages?.[p];
+            const pHasInvAmt = !!pInvAmtEntry;
+
+            const pInvRaw = pData.invoiceNumber ? pData.invoiceNumber.trim() : (currentInvoiceNumber ? currentInvoiceNumber.trim() : 'DEFAULT');
+            const pInvKey = pInvRaw.toLowerCase();
+            const pInvEntries = invAmountsByInv[pInvKey] || [];
+            const pInvPages = pInvEntries.map(e => e.page);
+
+            const isDupError = pHasInvAmt && (pInvEntries.length >= 2);
+            const pInvGroupPages = invoiceGroups[pInvRaw] || [p];
+            const pMaxPageOfGroup = Math.max(...pInvGroupPages);
+            const hasDifferentInvAfter = recordedPages.some(pg => {
+                if (pg <= pMaxPageOfGroup) return false;
+                const pgInv = store.pages[pg]?.invoiceNumber ? store.pages[pg].invoiceNumber.trim() : 'DEFAULT';
+                return pgInv.toLowerCase() !== pInvKey;
+            });
+            const pExpectedLastPage = hasDifferentInvAfter ? pMaxPageOfGroup : totalPages;
+            const isNonLastCaution = pHasInvAmt && !isDupError && (p < pExpectedLastPage);
+
+            let pStatus = pData.status || 'VALID';
+            let pErrorSummary = pData.errorSummary || 'Valid';
+
+            if (isDupError) {
+                pStatus = 'INVALID';
+                pErrorSummary = `Multiple invoice_amount (${pInvPages.map(pg => `P${pg}`).join(', ')})`;
+                if (!pagesWithErrors.includes(p)) pagesWithErrors.push(p);
+            } else if (isNonLastCaution && pStatus === 'VALID') {
+                pStatus = 'CAUTION';
+                pErrorSummary = 'Caution: invoice_amount on non-last page';
+                if (!pagesWithCautions.includes(p)) pagesWithCautions.push(p);
+            }
+
+            pageStatusList.push({
+                page: p,
+                invoiceNumber: pData.invoiceNumber || null,
+                status: pStatus,
+                errorSummary: pErrorSummary,
+                sumAmount: pData.sumAmount || 0,
+                hasInvoiceAmount: pHasInvAmt,
+                invoiceAmountValue: pInvAmtEntry ? pInvAmtEntry.value : null,
+                isInvoiceAmountDup: isDupError,
+                isInvoiceAmountNonLast: isNonLastCaution
+            });
+        }
+
+        if (hasInvoiceAmountError) {
+            return {
+                isMultiPage: true,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                invoiceNumber: currentInvoiceNumber,
+                activeInvoicePages: activeInvoicePages,
+                sumAmount: cumulativeSum,
+                status: 'MULTIPLE_INSTANCES',
+                hasInvoiceAmountError: true,
+                invoiceAmountPages: thisInvAmountPages,
+                pageBreakdown: pageBreakdown,
+                pagesWithErrors: pagesWithErrors,
+                pageStatusList: pageStatusList,
+                message: `Multiple invoice_amount instances found across pages [${thisInvAmountPages.join(', ')}] for invoice_number "${currentInvoiceNumber}". Each invoice must contain exactly one invoice_amount.`
+            };
+        }
+
+        if (!invoiceAmount || invoiceAmount.value === null) {
+            return {
+                isMultiPage: true,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                invoiceNumber: currentInvoiceNumber,
+                activeInvoicePages: activeInvoicePages,
+                sumAmount: cumulativeSum,
+                status: 'MULTI_PAGE_PENDING',
+                hasInvoiceAmountCaution: false,
+                pageBreakdown: pageBreakdown,
+                pagesWithErrors: pagesWithErrors,
+                pageStatusList: pageStatusList
+            };
+        }
+
+        if (!hasAllPages) {
+            return {
+                isMultiPage: true,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                invoiceNumber: currentInvoiceNumber,
+                activeInvoicePages: activeInvoicePages,
+                sumAmount: cumulativeSum,
+                status: 'MULTI_PAGE_PENDING',
+                invoiceAmount: invoiceAmount.value,
+                invoiceAmountPages: thisInvAmountPages,
+                hasInvoiceAmountCaution: hasInvoiceAmountCaution,
+                invoiceAmountCautionType: invoiceAmountCautionType,
+                invoiceAmountCautionMessage: invoiceAmountCautionMessage,
+                hasInvoiceAmountError: false,
+                pageBreakdown: pageBreakdown,
+                pagesWithErrors: pagesWithErrors,
+                pageStatusList: pageStatusList
+            };
+        }
+
+        const diff = Math.round(Math.abs(cumulativeSum - invoiceAmount.value) * 100) / 100;
+        const isMatch = diff <= 0.10;
+
+        return {
+            isMultiPage: true,
+            currentPage: currentPage,
+            totalPages: totalPages,
+            invoiceNumber: currentInvoiceNumber,
+            activeInvoicePages: activeInvoicePages,
+            sumAmount: cumulativeSum,
+            status: isMatch ? 'MATCH' : 'MISMATCH',
+            invoiceAmount: invoiceAmount.value,
+            invoiceAmountPages: thisInvAmountPages,
+            hasInvoiceAmountCaution: hasInvoiceAmountCaution,
+            invoiceAmountCautionType: invoiceAmountCautionType,
+            hasInvoiceAmountError: false,
+            difference: diff,
+            pageBreakdown: pageBreakdown,
+            pagesWithErrors: pagesWithErrors,
+            pageStatusList: pageStatusList
+        };
+    }
+
+    // --- SCENARIO A: 5-page Single Invoice with invoice_amount on Page 2 (Non-Last Page Caution) ---
+    const storeA = { pages: {}, invoiceAmountPages: {} };
+    // Page 1: $50.00, no invoice_amount
+    storeA.pages[1] = { pageNumber: 1, invoiceNumber: 'INV-100', sumAmount: 50.00, rowCount: 1, status: 'VALID' };
+    const p1A = simulateAttachTotalValidation(storeA, 1, 5, 'INV-100', null);
+    assert.strictEqual(p1A.status, 'MULTI_PAGE_PENDING');
+    assert.strictEqual(p1A.hasInvoiceAmountCaution, false);
+
+    // Page 2: $60.00, live invoice_amount = $200.00 (on non-last page 2 of 5!)
+    storeA.pages[2] = { pageNumber: 2, invoiceNumber: 'INV-100', sumAmount: 60.00, rowCount: 1, status: 'VALID' };
+    const p2A = simulateAttachTotalValidation(storeA, 2, 5, 'INV-100', { value: 200.00 });
+    // MUST immediately caution the user without waiting for Page 5!
+    assert.strictEqual(p2A.hasInvoiceAmountCaution, true, 'Must immediately flag Caution for invoice_amount on non-last page');
+    assert.strictEqual(p2A.invoiceAmountCautionType, 'NON_LAST_PAGE');
+    assert.deepStrictEqual(p2A.invoiceAmountPages, [2]);
+    assert.strictEqual(p2A.sumAmount, 110.00);
+
+    // Check pageStatusList for Page 2: marked as CAUTION
+    const p2Card = p2A.pageStatusList.find(p => p.page === 2);
+    assert.strictEqual(p2Card.isInvoiceAmountNonLast, true);
+    assert.strictEqual(p2Card.status, 'CAUTION');
+    assert.strictEqual(p2Card.hasInvoiceAmount, true);
+
+    // --- SCENARIO B: Same Invoice has another invoice_amount on Page 5 -> RED ERROR (MULTIPLE_INSTANCES) ---
+    storeA.pages[3] = { pageNumber: 3, invoiceNumber: 'INV-100', sumAmount: 40.00, rowCount: 1, status: 'VALID' };
+    storeA.pages[4] = { pageNumber: 4, invoiceNumber: 'INV-100', sumAmount: 30.00, rowCount: 1, status: 'VALID' };
+    storeA.pages[5] = { pageNumber: 5, invoiceNumber: 'INV-100', sumAmount: 20.00, rowCount: 1, status: 'VALID' };
+    // On Page 5, another invoice_amount = $200.00 is found!
+    const p5A = simulateAttachTotalValidation(storeA, 5, 5, 'INV-100', { value: 200.00 });
+    // MUST show RED ERROR: MULTIPLE_INSTANCES on same invoice
+    assert.strictEqual(p5A.status, 'MULTIPLE_INSTANCES', 'Must show RED ERROR when 2 pages of the same invoice have invoice_amount');
+    assert.strictEqual(p5A.hasInvoiceAmountError, true);
+    assert.deepStrictEqual(p5A.invoiceAmountPages, [2, 5]);
+    assert(p5A.message.includes('INV-100'), 'Error message must reference the matching invoice_number');
+    assert(p5A.pagesWithErrors.includes(2) && p5A.pagesWithErrors.includes(5), 'Both pages with duplicate totals must be marked with errors');
+
+    const p2CardDup = p5A.pageStatusList.find(p => p.page === 2);
+    const p5CardDup = p5A.pageStatusList.find(p => p.page === 5);
+    assert.strictEqual(p2CardDup.isInvoiceAmountDup, true);
+    assert.strictEqual(p2CardDup.status, 'INVALID');
+    assert.strictEqual(p5CardDup.isInvoiceAmountDup, true);
+    assert.strictEqual(p5CardDup.status, 'INVALID');
+
+    // --- SCENARIO C: Multi-Invoice Document (5 Pages: P1-2 = INV-A, P3-5 = INV-B) ---
+    // Each invoice has exactly ONE invoice_amount on its respective last page
+    const storeC = { pages: {}, invoiceAmountPages: {} };
+    // INV-A: Page 1 ($100.00) & Page 2 ($50.00, live invoice_amount: $150.00)
+    storeC.pages[1] = { pageNumber: 1, invoiceNumber: 'INV-A', sumAmount: 100.00, rowCount: 2, status: 'VALID' };
+    storeC.pages[2] = { pageNumber: 2, invoiceNumber: 'INV-A', sumAmount: 50.00, rowCount: 1, status: 'VALID' };
+    simulateAttachTotalValidation(storeC, 2, 5, 'INV-A', { value: 150.00 });
+
+    // INV-B: Page 3 ($70.00), Page 4 ($80.00), Page 5 ($50.00, live invoice_amount: $200.00)
+    storeC.pages[3] = { pageNumber: 3, invoiceNumber: 'INV-B', sumAmount: 70.00, rowCount: 1, status: 'VALID' };
+    storeC.pages[4] = { pageNumber: 4, invoiceNumber: 'INV-B', sumAmount: 80.00, rowCount: 1, status: 'VALID' };
+    storeC.pages[5] = { pageNumber: 5, invoiceNumber: 'INV-B', sumAmount: 50.00, rowCount: 1, status: 'VALID' };
+    const p5B = simulateAttachTotalValidation(storeC, 5, 5, 'INV-B', { value: 200.00 });
+
+    // Validation for INV-B:
+    // Active pages must be [3, 4, 5], sum must be 70 + 80 + 50 = 200.00, matching invoice amount 200.00
+    assert.strictEqual(p5B.status, 'MATCH', 'INV-B should MATCH exactly on cumulative sum of pages 3, 4, 5');
+    assert.strictEqual(p5B.sumAmount, 200.00);
+    assert.strictEqual(p5B.invoiceAmount, 200.00);
+    assert.strictEqual(p5B.difference, 0.00);
+    assert.strictEqual(p5B.hasInvoiceAmountError, false, 'No duplicate error because INV-A and INV-B each have exactly one invoice_amount');
+    assert.deepStrictEqual(p5B.activeInvoicePages, [3, 4, 5]);
+
+    // Validation for INV-A: user flips back to Page 2
+    const p2A_eval = simulateAttachTotalValidation(storeC, 2, 5, 'INV-A', null);
+    assert.strictEqual(p2A_eval.status, 'MATCH', 'INV-A should MATCH on cumulative sum of pages 1, 2');
+    assert.strictEqual(p2A_eval.sumAmount, 150.00);
+    assert.strictEqual(p2A_eval.invoiceAmount, 150.00);
+    assert.deepStrictEqual(p2A_eval.activeInvoicePages, [1, 2]);
+
+    // Check subtle invoice tracking on all 5 page cards
+    const card1 = p5B.pageStatusList.find(p => p.page === 1);
+    const card2 = p5B.pageStatusList.find(p => p.page === 2);
+    const card3 = p5B.pageStatusList.find(p => p.page === 3);
+    const card5 = p5B.pageStatusList.find(p => p.page === 5);
+    assert.strictEqual(card1.invoiceNumber, 'INV-A');
+    assert.strictEqual(card2.invoiceNumber, 'INV-A');
+    assert.strictEqual(card2.hasInvoiceAmount, true);
+    assert.strictEqual(card2.isInvoiceAmountDup, false);
+    assert.strictEqual(card3.invoiceNumber, 'INV-B');
+    assert.strictEqual(card5.invoiceNumber, 'INV-B');
+    assert.strictEqual(card5.hasInvoiceAmount, true);
+    assert.strictEqual(card5.isInvoiceAmountDup, false);
+
+    // --- SCENARIO D: INV-B has duplicate invoice_amount on Page 3 and Page 5 -> INV-B triggers red error, INV-A remains clean ---
+    storeC.invoiceAmountPages[3] = { page: 3, value: 200.00, invoiceNumber: 'INV-B' };
+    const p5B_dup = simulateAttachTotalValidation(storeC, 5, 5, 'INV-B', null);
+    assert.strictEqual(p5B_dup.status, 'MULTIPLE_INSTANCES');
+    assert.strictEqual(p5B_dup.hasInvoiceAmountError, true);
+    assert.deepStrictEqual(p5B_dup.invoiceAmountPages, [3, 5]);
+
+    // Even when viewing INV-B with duplicate error, INV-A's page 2 is NOT marked duplicate!
+    const p2CardIsolated = p5B_dup.pageStatusList.find(p => p.page === 2);
+    const p3CardIsolated = p5B_dup.pageStatusList.find(p => p.page === 3);
+    const p5CardIsolated = p5B_dup.pageStatusList.find(p => p.page === 5);
+    assert.strictEqual(p2CardIsolated.isInvoiceAmountDup, false, 'INV-A page 2 must NOT be marked duplicate');
+    assert.strictEqual(p3CardIsolated.isInvoiceAmountDup, true, 'INV-B page 3 must be marked duplicate');
+    assert.strictEqual(p5CardIsolated.isInvoiceAmountDup, true, 'INV-B page 5 must be marked duplicate');
+
+    console.log('  Passed ✅');
+}
+
 testDocumentInstanceMatching();
 testSidebarScrollingMemory();
 testCrossDocumentEnvironmentMemory();
@@ -3660,8 +3991,9 @@ testTablelessPageAccumulationAndStateIsolation();
 testPage1TablePreservationOnNavigation();
 testRequiredTableColumnsValidation();
 testMultiPageTablelessPage1Isolation();
+testMultiPageInvoiceAmountAndMultiInvoicePartitioning();
 
-console.log('--- ALL 34 TEST SUITES PASSED SUCCESSFULLY! ---');
+console.log('--- ALL 35 TEST SUITES PASSED SUCCESSFULLY! ---');
 
 
 
